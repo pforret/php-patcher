@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# fake ssh for the bats tests: "ssh -G" goes to the real ssh (it does not connect),
+# anything else prints canned output, fails for hosts named bad*,
+# or wants a sudo password (exit 3) for hosts named sudo*
+real_ssh="${REAL_SSH:-/usr/bin/ssh}"
+for arg in "$@"; do
+  [[ $arg == "-G" ]] && exec "$real_ssh" "$@"
+done
+host=""
+while (($#)); do
+  case "$1" in
+  -o | -F) shift 2 ;;
+  -*) shift ;;
+  *) host="$1"; shift; break ;;
+  esac
+done
+stdin=$(cat) # «IFS= read -r sudo_pass», the sudo password, then the remote script
+sudo_pass=$(sed -n 2p <<<"$stdin")
+printf "%s\n" "** WARNING: connection is not using a post-quantum key exchange algorithm." "** This session may be vulnerable to \"store now, decrypt later\" attacks." >&2
+if [[ $host == bad* ]]; then
+  echo "ssh: connect to host $host port 22: Connection refused" >&2
+  exit 255
+fi
+if [[ $host == sudo* && $sudo_pass != secret ]]; then
+  # host that needs the sudo password «secret»
+  echo "  FakeOS 1.0"
+  echo "  ERROR: needs a sudo password"
+  echo "SUDO_CMD sudo apt-get update && sudo apt-get install -y --only-upgrade php8.4-fpm"
+  exit 3
+fi
+echo "  FakeOS 1.0"
+echo "  php (cli)      8.4.27   OK"
+echo "  args: $*"

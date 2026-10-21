@@ -90,8 +90,15 @@ flag|V|VERBOSE|also show debug messages
 flag|f|FORCE|do not ask for confirmation (always yes)
 option|L|LOG_DIR|folder for log files |$HOME/log/$script_prefix
 option|T|TMP_DIR|folder for temp files|/tmp/$script_prefix
-choice|1|action|action to perform|action1,action2,check,env,install,update
-param|?|input|input file/text
+flag|p|patch|also patch: upgrade PHP packages, restart php-fpm, show versions again
+flag|l|list|only list the selected hosts, don't connect
+flag|i|pick|pick 1 host from the list (fzf if available)
+option|I|include|only hosts whose name matches this regex|
+option|x|exclude|skip hosts whose name matches this regex|
+option|F|fixed|first fixed release per PHP branch|8.5.12 8.4.27 8.3.36 8.2.35
+option|R|released|when the --fixed versions come out, UTC (YYYY-MM-DD HH:MM, empty = already out)|2026-10-21 14:00
+choice|1|action|action to perform|host,file,auto,check,env,install,update
+param|?|input|host name(s), comma-separated (host) or file with host names (file)
 " -v -e '^#' -e '^\s*$'
 }
 
@@ -106,25 +113,34 @@ function Script:main() {
   IO:log "[$script_basename] $script_version started"
 
   Os:require "awk"
+  Os:require "ssh"
 
   case "${action,,}" in # ${action,,} = lowercase $action
-  action1)
-    #TIP: use «$script_prefix action1» to ...
-    #TIP:> $script_prefix action1
-    do_action1
+  host)
+    #TIP: use «$script_prefix host <server>» to show the PHP versions on one server (or a comma-separated list)
+    #TIP:> $script_prefix host web1
+    #TIP:> $script_prefix host web1,web2,web3
+    #TIP:> $script_prefix --patch host web1
+    do_hosts host
     ;;
 
-  action2)
-    #TIP: use «$script_prefix action2» to ...
-    #TIP:> $script_prefix action2
-    do_action2
+  file)
+    #TIP: use «$script_prefix file <hosts.txt>» for every server in a file (one per line, # comments ok)
+    #TIP:> $script_prefix file hosts.txt
+    #TIP:> $script_prefix --pick file hosts.txt
+    do_hosts file
     ;;
 
-  action3)
-    #TIP: use «$script_prefix action3» to ...
-    #TIP:> $script_prefix action3
-    # Os:require "convert" "imagemagick"
-    # CONVERT $input $output
+  auto)
+    #TIP: use «$script_prefix auto» for every Host in ~/.ssh/config (and its Include files)
+    #TIP:> $script_prefix -l auto
+    #TIP:> $script_prefix -I forge auto
+    #TIP:> $script_prefix -x 'pi|nas|^old-' auto
+    #TIP:> $script_prefix -f --patch auto
+    #TIP: use «$script_prefix --pick auto» to choose 1 server from the list (fzf if installed)
+    #TIP:> $script_prefix --pick --patch auto
+    #TIP: check the --fixed versions against «https://www.php.net/archive/2026.php»
+    do_hosts auto
     ;;
 
   check | env)
@@ -166,19 +182,383 @@ function Script:main() {
 ##                   Os:require "binary" [install_cmd], Os:tempfile [ext]
 #####################################################################
 
-function do_action1() {
-  IO:log "action1"
-  # Os:require examples: (1 arg = binary name, 2 args = binary + package/command)
-  # Os:require "ffmpeg"                                  # => brew install ffmpeg
-  # Os:require "convert" "imagemagick"                   # => brew install imagemagick
-  # Os:require "progressbar" "basher install pforret/progressbar"
-  # (code)
+git_hosts='^(github\.com|gitlab\.com|bitbucket\.org|ssh\.dev\.azure\.com|codeberg\.org|ssh\.github\.com)$'
+
+# shellcheck disable=SC2154 # patch/list/pick/released are set by Option:initialize/Option:parse via eval
+function do_hosts() {
+  # do_hosts <host|file|auto>: collect the hosts, then show (and with --patch: patch) PHP on each of them
+  local source="$1"
+  local -a hosts=() valid=() failed=()
+  local h choice remote err_file out err rc sudo_pass tries user manual release_dates
+  check_fixed
+  ((pick && list)) && IO:die "--pick and --list cannot be combined"
+
+  # collectors run in a subshell, so validate here: an IO:die in there would not stop the script
+  case "$source" in
+  host)
+    [[ -n "$input" ]] || IO:die "need a host: $script_prefix host <server>[,<server>...]"
+    mapfile -t hosts < <(hosts_from_list "$input")
+    ;;
+  file)
+    [[ -n "$input" ]] || IO:die "need a host file: $script_prefix file <hosts.txt>"
+    [[ -r "$input" ]] || IO:die "cannot read host file [$input]"
+    mapfile -t hosts < <(hosts_from_file "$input")
+    ;;
+  auto)
+    [[ -z "$input" ]] || IO:die "auto takes no argument; put flags before the verb: $script_prefix --patch auto"
+    [[ -r "$HOME/.ssh/config" ]] || IO:die "no $HOME/.ssh/config found"
+    mapfile -t hosts < <(hosts_from_ssh_config)
+    ;;
+  esac
+
+  for h in "${hosts[@]}"; do
+    if [[ $h == -* ]]; then
+      # a leading - would be read as an ssh option
+      [[ $source == host ]] && IO:die "invalid host [$h]"
+      IO:alert "skip invalid host [$h]"
+      continue
+    fi
+    [[ -n "$include" && ! $h =~ $include ]] && continue
+    [[ -n "$exclude" && $h =~ $exclude ]] && continue
+    valid+=("$h")
+  done
+  hosts=("${valid[@]}")
+  ((${#hosts[@]})) || IO:die "no hosts given or found"
+
+  if ((list)); then
+    printf '%s\n' "${hosts[@]}"
+    return 0
+  fi
+  warn_unreleased
+
+  if ((pick && ${#hosts[@]} > 1)); then
+    # Tool:pick silently returns the first option with FORCE or without a terminal: always let the user pick
+    Os:has_tty || IO:die "--pick needs a terminal"
+    choice=$(printf '%s\n' "${hosts[@]}" | FORCE=0 Tool:pick "Pick a host (${#hosts[@]}):") || IO:die "no host picked"
+    [[ -n "$choice" ]] || IO:die "no host picked"
+    hosts=("$choice")
+  fi
+
+  if ((patch)); then
+    IO:confirm "Patch PHP on ${#hosts[@]} host(s): $(printf '%s ' "${hosts[@]}")?" || IO:die "cancelled"
+  fi
+
+  release_dates="$(php_release_dates)"
+  remote="$(remote_script)"
+  err_file="${TMP_DIR:-/tmp}/$execution_day.$$.ssh.err"
+  for h in "${hosts[@]}"; do
+    IO:log "$h: patch=$patch fixed=$fixed"
+    sudo_pass=""
+    tries=0
+    while true; do
+      ((piped)) || IO:progress "$h ..."
+      # bash -s runs line 1, which reads line 2 (the sudo password) from the same stdin
+      # shellcheck disable=SC2029 # $patch and $fixed are meant to expand on this side
+      out=$(printf 'IFS= read -r sudo_pass\n%s\n%s\n' "$sudo_pass" "$remote" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" "bash -s -- $patch $fixed" 2>"$err_file")
+      rc=$?
+      ((piped)) || IO:progress " "
+      # exit 3 = sudo needs a (correct) password: ask for it, unless -f or no terminal
+      if ((rc != 3 || tries >= 3 || FORCE)) || ! Os:has_tty; then break; fi
+      user=$(ssh -n -G "$h" 2>/dev/null | awk '$1=="user"{print $2}')
+      IFS= read -r -s -p "sudo password for ${user:-?}@$h (empty = skip): " sudo_pass </dev/tty
+      echo >&2
+      [[ -n "$sudo_pass" ]] || break
+      tries=$((tries + 1))
+    done
+    sudo_pass=""
+    manual=$(sed -n 's/^SUDO_CMD //p' <<<"$out")
+    out=$(grep -v '^SUDO_CMD ' <<<"$out")
+    # drop the OpenSSH 10 post-quantum warning ("** WARNING: connection is not using a post-quantum ...")
+    err=$(grep -v '^\*\* ' "$err_file")
+    show_host "$h" "$rc" "$out" "$err"
+    [[ -n "$manual" ]] && IO:print "  run it yourself: ${txtBold}ssh -t $h '$manual'${txtReset}"
+    ((rc)) && failed+=("$h")
+  done
+  rm -f "$err_file"
+
+  if ((${#failed[@]})); then
+    IO:print "${txtError}${char_fail} ${#failed[@]}/${#hosts[@]} host(s) FAILED${txtReset}: $(printf '%s ' "${failed[@]}")" >&2
+    IO:log "FAILED: $(printf '%s ' "${failed[@]}")"
+    # Script:exit always exits 0: drop the error trap and exit 1 ourselves
+    trap - INT TERM EXIT
+    exit 1
+  fi
+  if ((patch)); then
+    IO:success "${#hosts[@]} host(s) patched"
+  else
+    IO:success "${#hosts[@]} host(s) checked"
+  fi
 }
 
-function do_action2() {
-  IO:log "action2"
-  # (code)
+function show_host() {
+  # show_host <host> <exit code> <remote stdout> <ssh stderr>: one block per host,
+  # header = host + OS (first line of the remote output), status words in colour
+  local host="$1" rc="$2" out="$3" err="$4" os="" line first=1
+  [[ -n "$out" ]] && os="$(Str:trim "${out%%$'\n'*}")"
+  IO:print "${txtBold}${host}${txtReset}  ${txtItalic}${os}${txtReset}"
+  if [[ "$out" == *$'\n'* ]]; then
+    # release_dates (from do_hosts) is read first, to add the release date + age of each version
+    IO:print "$(tail -n +2 <<<"$out" |
+      awk -v ok="$txtInfo" -v warn="$txtWarn" -v bad="$txtError" -v off="$txtReset" -v dim="$txtItalic" \
+        -v today="$(date +%Y-%m-%d)" '
+        # day number, good enough for differences between dates (Julian day without the century rule)
+        function day(ymd, a) { split(ymd, a, "-"); if (a[2] < 3) { a[1]--; a[2] += 12 }
+          return int(365.25 * (a[1] + 4716)) + int(30.6001 * (a[2] + 1)) + a[3] }
+        FNR == NR   { released[$1] = $2; next }
+        { age = "" }
+        # x.y.z without a distro suffix (7.4.3-4ubuntu2 has backported fixes: its upstream date says little)
+        match($0, /[0-9]+\.[0-9]+\.[0-9]+[^ ]*/) && (substr($0, RSTART, RLENGTH) in released) {
+          split(released[substr($0, RSTART, RLENGTH)], r, "-"); split(today, t, "-")
+          m = (t[1] - r[1]) * 12 + (t[2] - r[2]) - (t[3] + 0 < r[3] + 0)
+          age = "  " dim "released " released[substr($0, RSTART, RLENGTH)] ", " \
+            (m < 2 ? day(today) - day(released[substr($0, RSTART, RLENGTH)]) " days ago" : \
+              m < 24 ? m " months ago" : int(m / 12) " years ago") off
+        }
+        / OK$/      { sub(/ OK$/, " " ok "OK" off) }
+        /PATCH \(/  { sub(/PATCH \(.*$/, warn "&" off) }
+        /EOL \(/    { sub(/EOL \(.*$/, bad "&" off) }
+        /ERROR/     { $0 = bad $0 off }
+        /WARNING:/  { $0 = warn $0 off }
+        { print $0 age }' <(printf '%s\n' "${release_dates:-}") -)"
+  fi
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if ((rc && first)); then
+      IO:print "  ${txtError}FAILED${txtReset}  $line"
+      first=0
+    else
+      IO:print "  ${txtWarn}$line${txtReset}"
+    fi
+  done <<<"$err"
+  ((rc && first)) && IO:print "  ${txtError}FAILED${txtReset}  exit code $rc"
+  true
+}
 
+function php_release_dates() {
+  # php_release_dates: print "<version> <yyyy-mm-dd>" for every PHP 5/7/8 release, from php.net,
+  # cached for an hour; offline it uses the old cache, or prints nothing (no release dates shown)
+  local cache="${XDG_CACHE_HOME:-$HOME/.cache}/$script_prefix/php-releases.txt" json="" major
+  if [[ ! -s "$cache" || -n "$(find "$cache" -mmin +60 2>/dev/null)" ]]; then
+    for major in 5 7 8; do
+      json+=$(curl -fsS --max-time 10 "https://www.php.net/releases/index.php?json&version=$major&max=-1" 2>/dev/null) || {
+        json=""
+        break
+      }
+    done
+    if [[ -n "$json" ]]; then
+      mkdir -p "${cache%/*}"
+      # {"8.3.35":{"announcement":true,"tags":[...],"date":"24 Sep 2026","source":[{..."date":"24 Sep 2026"}]},...}
+      grep -oE '"[0-9]+\.[0-9]+\.[0-9]+":\{|"date":"[0-9]+ [A-Za-z]+ [0-9]{4}"' <<<"$json" |
+        awk 'BEGIN { split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", mon); for (i in mon) num[mon[i]] = i }
+          /^"[0-9]/ { gsub(/[":{]/, ""); v = $0; next }
+          v { gsub(/"date":"|"/, ""); split($0, d, " "); printf "%s %04d-%02d-%02d\n", v, d[3], num[d[2]], d[1]; v = "" }' \
+          >"$cache.$$" && mv "$cache.$$" "$cache"
+    else
+      IO:debug "could not fetch the PHP release dates from php.net"
+    fi
+  fi
+  [[ -r "$cache" ]] && cat "$cache"
+  true
+}
+
+function check_fixed() {
+  # every --fixed version ends up in the remote command line, so only allow x.y.z
+  local IFS=' ' v
+  [[ -n "${fixed// /}" ]] || IO:die "--fixed cannot be empty"
+  for v in $fixed; do
+    [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || IO:die "invalid --fixed version [$v]"
+  done
+  [[ -z "$released" || $released =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}$ ]] ||
+    IO:die "invalid --released [$released], use 'YYYY-MM-DD HH:MM' (UTC)"
+}
+
+function warn_unreleased() {
+  # before --released, no server can get the --fixed versions yet: say so instead of letting every host fail
+  local now left="" h m
+  now=$(date -u '+%Y-%m-%d %H:%M')
+  [[ -n "$released" && "$now" < "$released" ]] || return 0
+  if [[ ${now% *} == "${released% *}" ]]; then
+    h=${now#* } m=${released#* }
+    left=" (in $(((10#${m%:*} * 60 + 10#${m#*:}) - (10#${h%:*} * 60 + 10#${h#*:}))) min)"
+  fi
+  IO:alert "the --fixed versions ($fixed) are only released at $released UTC$left: until then, and until the packages reach apt (hours later), hosts can only get the previous patch and stay PATCH"
+}
+
+function hosts_from_list() {
+  # hosts_from_list <h1,h2,...>: one host per line, trimmed, without empty items and duplicates
+  tr ',' '\n' <<<"$1" | awk '{gsub(/^[ \t]+|[ \t]+$/, "")} $0 != "" && !seen[$0]++'
+}
+
+function hosts_from_file() {
+  # hosts_from_file <file>: the first word of every line, skipping blank lines and # comments
+  local h
+  while IFS=$' \t' read -r h _; do
+    [[ -z "$h" || "$h" == \#* ]] && continue
+    echo "$h"
+  done <"$1"
+}
+
+function hosts_from_ssh_config() {
+  # every usable Host of ~/.ssh/config: no wildcards/negations, no git hosts,
+  # no aliases of a server already in the list (same HostName and Port, via ssh -G)
+  local h target seen=" "
+  while read -r h; do
+    [[ $h == *[\*\?]* || $h == \!* ]] && continue
+    [[ $h =~ $git_hosts ]] && continue
+    [[ -n "$include" && ! $h =~ $include ]] && continue
+    [[ -n "$exclude" && $h =~ $exclude ]] && continue
+    target=$(ssh -n -G -F "$HOME/.ssh/config" "$h" 2>/dev/null | awk '$1=="hostname"{h=$2} $1=="port"{p=$2} END{print h ":" p}')
+    [[ $seen == *" $target "* ]] && continue
+    seen+="$target "
+    echo "$h"
+  done < <(Ssh:config_hosts "$HOME/.ssh/config" | awk '!seen[$0]++')
+}
+
+function Ssh:config_hosts() {
+  # Ssh:config_hosts <file>: print the Host names of an ssh config, following Include (relative to ~/.ssh)
+  # IFS=' ': an Include line can list several files, and bashew's IFS does not split on spaces
+  local IFS=' ' file="$1" line inc f
+  [[ -r "$file" ]] || return 0
+  while IFS= read -r line; do
+    if [[ $line == INCLUDE\ * ]]; then
+      for inc in ${line#INCLUDE }; do
+        inc=${inc/#\~/$HOME}
+        [[ $inc == /* ]] || inc="$HOME/.ssh/$inc"
+        for f in $inc; do Ssh:config_hosts "$f"; done # unquoted: Include allows globs
+      done
+    else
+      echo "$line"
+    fi
+  done < <(awk 'tolower($1)=="host"{for(i=2;i<=NF && $i !~ /^#/;i++) print $i}
+                tolower($1)=="include"{$1=""; print "INCLUDE" $0}' "$file")
+}
+
+function remote_script() {
+  # the script that runs on each server: bash -s -- <patch 0|1> <fixed versions...>
+  # do_hosts puts «IFS= read -r sudo_pass» + the (maybe empty) sudo password in front of it,
+  # so the password never shows up on a command line or on disk
+  cat <<'REMOTE'
+upgrade=$1; shift; fixed="$*"
+shopt -s nullglob
+
+status() {  # status <version>
+  local v=$1 branch=${1%.*} f
+  for f in $fixed; do
+    if [[ ${f%.*} == "$branch" ]]; then
+      [[ $(printf '%s\n%s\n' "$f" "$v" | sort -V | head -1) == "$f" ]] && echo OK || echo "PATCH (fixed in $f)"
+      return
+    fi
+  done
+  echo "EOL (no PHP fix for $branch)"
+}
+
+show() {
+  local b v found=0
+  if command -v php >/dev/null; then
+    v=$(php -r 'echo PHP_VERSION;' 2>/dev/null); printf '  %-14s %-8s %s\n' "php (cli)" "$v" "$(status "$v")"; found=1
+  fi
+  for b in /usr/sbin/php-fpm* /usr/sbin/php*-fpm; do
+    [[ -x $b ]] || continue
+    v=$("$b" -v 2>/dev/null | awk 'NR==1{print $2}')
+    printf '  %-14s %-8s %s\n' "$(basename "$b")" "$v" "$(status "$v")"; found=1
+  done
+  ((found)) || echo "  no PHP found"
+}
+
+as_root() {  # as_root <cmd...>: sudo, fed the password if one was given
+  # -k: always ask, so the password line is never left on the command's stdin
+  if [[ -n $sudo_pass ]]; then
+    printf '%s\n' "$sudo_pass" | sudo -k -S -p '' "$@"
+  else
+    sudo -n "$@"
+  fi
+}
+
+php_packages() {  # installed php packages + versions, to see if an upgrade changed anything
+  if command -v dpkg-query >/dev/null; then
+    dpkg-query -W -f='${binary:Package} ${Version}\n' 'php*' 'libapache2-mod-php*' 2>/dev/null
+  else
+    rpm -qa 'php*' 2>/dev/null | sort
+  fi
+}
+
+do_upgrade() {
+  local pkgs="" pm="" svc apache="" manual
+  local -a fpm=()
+  if command -v apt-get >/dev/null; then
+    pkgs=$(dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 'php*' 'libapache2-mod-php*' 2>/dev/null | awk '$1=="ii"{print $2}')
+    [[ -n $pkgs ]] || { echo "  no php packages installed via apt"; return 0; }
+    manual="sudo apt-get update && sudo apt-get install -y --only-upgrade $(echo $pkgs)"
+  elif command -v dnf >/dev/null || command -v yum >/dev/null; then
+    pm=$(command -v dnf || command -v yum)
+    manual="sudo $(basename "$pm") -y upgrade php\\*"
+  else
+    echo "  ERROR: no apt-get, dnf or yum on this host"; return 1
+  fi
+  mapfile -t fpm < <(systemctl list-units --type=service --state=running --no-legend --plain 'php*-fpm*' 2>/dev/null | awk '{print $1}')
+  # mod_php lives inside Apache: reload it so the new PHP is loaded
+  for svc in apache2 httpd; do
+    if systemctl is-active --quiet "$svc" 2>/dev/null && compgen -G "/etc/apache2/mods-enabled/php*.load" >/dev/null; then
+      apache=$svc
+    fi
+  done
+  ((${#fpm[@]})) && manual+=" && sudo systemctl restart ${fpm[*]}"
+  [[ -n $apache ]] && manual+=" && sudo systemctl reload $apache"
+
+  if ! as_root true 2>/dev/null; then
+    if [[ -n $sudo_pass ]]; then echo "  ERROR: sudo password rejected"; else echo "  ERROR: needs a sudo password"; fi
+    echo "SUDO_CMD $manual" # picked up (and hidden) by the local side
+    exit 3
+  fi
+
+  local before
+  before=$(php_packages)
+  if [[ -n $pkgs ]]; then
+    echo "  apt: upgrading $(wc -w <<<"$pkgs") php packages"
+    # a dead source (old PPA, discontinued nodesource, ...) fails the whole update: carry on with the
+    # sources that did update; the before/after compare tells whether PHP got anything newer
+    as_root apt-get update -qq ||
+      echo "  WARNING: apt-get update had errors (see below), upgrading from the sources that did work"
+    # shellcheck disable=SC2086
+    as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --only-upgrade \
+      -o Dpkg::Options::=--force-confold $pkgs >/dev/null || {
+      echo "  ERROR: apt-get install failed; for 'Unmet dependencies' repair apt first: sudo dpkg --configure -a && sudo apt-get -f install"
+      return 1
+    }
+  else
+    echo "  $(basename "$pm"): upgrading php*"
+    as_root "$pm" -y -q upgrade 'php*' >/dev/null || return 1
+  fi
+  if [[ $(php_packages) == "$before" ]]; then
+    echo "  ERROR: no newer PHP packages in the package sources (OS too old for its PHP repo?)"
+    return 4
+  fi
+  for svc in "${fpm[@]}"; do
+    as_root systemctl restart "$svc" && echo "  restarted $svc"
+  done
+  if [[ -n $apache ]]; then
+    as_root systemctl reload "$apache" && echo "  reloaded $apache (mod_php)"
+  fi
+}
+
+echo "  $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -sr)"
+os_id=$(. /etc/os-release 2>/dev/null && echo "$ID")
+os_version=$(. /etc/os-release 2>/dev/null && echo "$VERSION_ID")
+# Ondřej's PPA (PHP 8.x on Ubuntu/Forge) only builds for Ubuntu LTS releases in standard support
+if [[ $os_id == ubuntu && ${os_version%%.*} =~ ^[0-9]+$ ]] && ((${os_version%%.*} <= 20)); then
+  echo "  WARNING: Ubuntu $os_version gets no newer PHP 8.x packages (no PPA anymore): move to Ubuntu 24.04"
+fi
+show
+if ((upgrade)); then
+  do_upgrade || exit $?
+  echo "  after upgrade:"
+  after=$(show); echo "$after"
+  if grep -q 'PATCH (' <<<"$after"; then
+    echo "  ERROR: upgraded, but still below the fixed version"
+    exit 4
+  fi
+fi
+REMOTE
 }
 
 #####################################################################

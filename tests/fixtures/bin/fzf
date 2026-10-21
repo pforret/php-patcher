@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# fake fzf for the bats tests: always picks the 2nd option
+sed -n 2p

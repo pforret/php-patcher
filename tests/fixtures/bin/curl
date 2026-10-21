@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# fake curl for the bats tests: canned php.net release JSON, or fails with FAKE_CURL_FAIL=1
+[[ -n "${FAKE_CURL_FAIL:-}" ]] && exit 22
+case "$*" in
+*version=8*) echo '{"8.4.27":{"announcement":true,"tags":["security"],"date":"6 Nov 2025","source":[{"filename":"php-8.4.27.tar.gz","date":"6 Nov 2025"}]},"8.4.26":{"tags":[],"date":"9 Oct 2025","source":[]}}' ;;
+*) echo '{"7.4.33":{"announcement":{"English":"/releases/7_4_33.php"},"tags":["security"],"date":"3 Nov 2022","source":[]}}' ;;
+esac
