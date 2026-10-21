@@ -2,7 +2,7 @@
 ### check-latest.sh: show the latest PHP release per branch, as published by php.net and the package sources
 ### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, apt (Ubuntu/Debian), pacman/AUR (Arch, Omarchy)
 ### Usage: ./check-latest.sh [--md] [-F "8.5.12 8.4.27 8.3.36 8.2.35"] [-u "noble jammy"] [-d "trixie bookworm"] [8.2 8.3 8.4 8.5]
-### Needs curl and jq. A version behind the expected (-F/--fixed) one is marked with '<' (--md: 🟢 ok / 🟠 not yet / 🔴 not available).
+### Needs curl and jq. A version behind the expected (-F/--fixed) one is marked with '<' (--md: 🟢 ok / 🟠 not yet / 🔴 not available / ⚠️ lookup failed = '?').
 set -uo pipefail
 
 branches=(8.2 8.3 8.4 8.5)
@@ -40,7 +40,19 @@ done
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
 
-fetch() { curl -fsSL --max-time 20 "$@" 2>/dev/null; }
+# a failed lookup (timeout, 5xx, rate limit) flags the cell; a 404 just means "not there"
+failed() { touch "$tmp_dir/fail.${cell_id:-x}"; }
+fetch() {
+  local body code
+  body=$(mktemp "$tmp_dir/body.XXXXXX")
+  code=$(curl -sL --max-time 20 -o "$body" -w '%{http_code}' "$@" 2>/dev/null)
+  case $code in
+  2*) cat "$body" ;;
+  404) ;;
+  *) failed ;;
+  esac
+  rm -f "$body"
+}
 newest() { grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1; }
 
 ## one function per source: print the latest x.y.z for branch $1 (empty = unknown)
@@ -56,7 +68,8 @@ src_github() {
 }
 
 src_eol() {
-  [[ -f "$tmp_dir/eol.json" ]] || fetch "https://endoflife.date/api/php.json" >"$tmp_dir/eol.json"
+  [[ -f "$tmp_dir/eol.json" ]] || cell_id=cache.eol fetch "https://endoflife.date/api/php.json" >"$tmp_dir/eol.json"
+  [[ -e "$tmp_dir/fail.cache.eol" ]] && failed
   jq -r --arg c "$1" '.[] | select(.cycle == $c) | .latest' "$tmp_dir/eol.json"
 }
 
@@ -96,7 +109,8 @@ src_ondrej() {
 src_sury() {
   # packages.sury.org (Debian): one Packages index per series ($2)
   local index="$tmp_dir/sury.$2"
-  [[ -f "$index" ]] || fetch "https://packages.sury.org/php/dists/$2/main/binary-amd64/Packages.gz" | gunzip >"$index" 2>/dev/null
+  [[ -f "$index" ]] || cell_id="cache.sury.$2" fetch "https://packages.sury.org/php/dists/$2/main/binary-amd64/Packages.gz" | gunzip >"$index" 2>/dev/null
+  [[ -e "$tmp_dir/fail.cache.sury.$2" ]] && failed
   awk -v pkg="php$1-cli" '$1=="Package:" {p=$2} $1=="Version:" && p==pkg {print $2}' "$index" | sed -E 's/^[0-9]+://; s/-.*//' | newest
 }
 
@@ -108,8 +122,9 @@ src_apt_local() {
 src_arch() {
   # Arch Linux official repo (also what Omarchy installs): php = newest branch, php-legacy = an older one
   [[ -f "$tmp_dir/arch.json" ]] || for pkg in php php-legacy; do
-    fetch "https://archlinux.org/packages/search/json/?name=$pkg" | jq -r '.results[].pkgver'
+    cell_id=cache.arch fetch "https://archlinux.org/packages/search/json/?name=$pkg" | jq -r '.results[].pkgver'
   done >"$tmp_dir/arch.json"
+  [[ -e "$tmp_dir/fail.cache.arch" ]] && failed
   grep -F "$1." "$tmp_dir/arch.json" | newest
 }
 
@@ -140,7 +155,7 @@ wait
 for i in "${!rows[@]}"; do
   IFS='|' read -r label os func arg <<<"${rows[$i]}"
   for b in "${branches[@]}"; do
-    $func "$b" ${arg:+"$arg"} >"$tmp_dir/cell.$i.$b" &
+    cell_id="$i.$b" $func "$b" ${arg:+"$arg"} >"$tmp_dir/cell.$i.$b" 2>/dev/null &
   done
 done
 wait
@@ -179,7 +194,9 @@ for i in "${!rows[@]}"; do
   cells=()
   for b in "${branches[@]}"; do
     v=$(cat "$tmp_dir/cell.$i.$b")
-    if [[ -z "$v" ]]; then
+    if [[ -e "$tmp_dir/fail.$i.$b" ]]; then
+      ((md)) && cells+=("⚠️${v:+ $v}") || cells+=("${v:+$v }?")
+    elif [[ -z "$v" ]]; then
       ((md)) && cells+=("🔴") || cells+=("-")
     elif is_behind "$v" "${expected[$b]:-${reference[$b]}}"; then
       ((md)) && cells+=("🟠 $v") || cells+=("$v <")
@@ -191,5 +208,5 @@ for i in "${!rows[@]}"; do
 done
 if ((md)); then
   echo
-  echo "_🟢 = has the expected version, 🟠 = not yet, 🔴 = not available. Checked $(date -u '+%Y-%m-%d %H:%M') UTC._"
+  echo "_🟢 = has the expected version, 🟠 = not yet, 🔴 = not available, ⚠️ = lookup failed. Checked $(date -u '+%Y-%m-%d %H:%M') UTC._"
 fi
