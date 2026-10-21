@@ -14,11 +14,20 @@ For each server it prints the OS and every PHP binary with a status:
 - `EOL (no PHP fix for 8.1)` — a branch that no longer gets fixes
 
 ```text
-forge1-nuuzio  Ubuntu 20.04.6 LTS
-  php (cli)      8.3.21   PATCH (fixed in 8.3.36)
-  php-fpm8.2     8.2.28   PATCH (fixed in 8.2.35)
-gandi1-forret
-  FAILED  39108@console.sd5.gpaas.net: Permission denied (password,publickey).
+% php-patcher --pick --patch auto
+Patch PHP on 1 host(s): ocean11 ? [y/N] y 
+sudo password for forge@ocean11 (empty = skip):                                                                                                                                                        
+ocean11  Ubuntu 24.04.4 LTS                                                                                                                                                                            
+  php (cli)      8.4.26   PATCH (fixed in 8.4.27)  released 2026-09-24, 27 days ago
+  php-fpm8.3     8.3.35   PATCH (fixed in 8.3.36)  released 2026-09-24, 27 days ago
+  php-fpm8.4     8.4.26   PATCH (fixed in 8.4.27)  released 2026-09-24, 27 days ago
+  apt: upgrading 51 php packages
+  restarted php8.3-fpm.service
+  restarted php8.4-fpm.service
+  after upgrade:
+  php (cli)      8.4.27   OK  released 2026-10-21, today
+  php-fpm8.3     8.3.36   OK  released 2026-10-21, today
+  php-fpm8.4     8.4.27   OK  released 2026-10-21, today
 ```
 
 ## Install
