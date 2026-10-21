@@ -198,3 +198,11 @@ teardown() {
   run "$SCRIPT" -f --patch -R "2000-01-01 14:00" host current1
   [[ $status -eq 1 ]]
 }
+
+@test "with an ERROR line from the server, apt warnings on stderr are not labelled FAILED" {
+  run "$SCRIPT" -f --patch -R "" host current1
+  [[ $status -eq 1 ]]
+  [[ $output == *"ERROR: no newer PHP packages"* ]]
+  [[ $output == *"W: Failed to fetch"* ]]
+  [[ $output != *"FAILED"*"W: Failed to fetch"* ]]
+}

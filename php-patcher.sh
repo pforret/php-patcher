@@ -332,6 +332,8 @@ function show_host() {
         /WARNING:/  { $0 = warn $0 off }
         { print $0 age }' <(printf '%s\n' "${release_dates:-}") -)"
   fi
+  # an ERROR line from the server already says why the host failed: then stderr is just extra info
+  [[ "$out" == *"ERROR:"* ]] && first=0
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     if ((rc && first)); then

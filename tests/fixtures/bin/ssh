@@ -34,6 +34,7 @@ if [[ $host == current* ]]; then
   echo "  FakeOS 1.0"
   echo "  php (cli)      8.4.26   PATCH (fixed in 8.4.27)"
   echo "  ERROR: no newer PHP packages in the package sources yet (the new release is not built yet)"
+  echo "W: Failed to fetch https://ppa.launchpadcontent.net/x/y/ubuntu/dists/noble/InRelease  503  Service Unavailable" >&2
   exit 4
 fi
 if [[ $host == focal* ]]; then

@@ -63,6 +63,18 @@ The vendor dropped that version or that Ubuntu release. Seen on our servers:
 | `ppa.setup-php.com/ondrej/php focal`     | PHP mirror, 404 for Ubuntu 20.04                | disable; focal needs an OS upgrade for newer PHP |
 | `archive.ubuntu.com` for a non-LTS release that reached end of life | moved to `old-releases.ubuntu.com` | switch the URL to `old-releases.ubuntu.com`, then upgrade the OS |
 
+### `503 Service Unavailable` (W:, not E:)
+
+```
+W: Failed to fetch https://ppa.launchpadcontent.net/ubuntuhandbook1/ffmpeg9/ubuntu/dists/noble/InRelease  503  Service Unavailable
+W: Some index files failed to download. They have been ignored, or old ones used instead.
+```
+
+Not a dead source: the server is temporarily overloaded or down. All Ubuntu PPAs share
+`ppa.launchpadcontent.net`, so this hits every PPA at once, Ondřej's PHP PPA included. It
+happened on 2026-10-21 right after a PHP security release. apt keeps the package lists it had and
+carries on (hence `W:`). Don't disable the source: wait and run `apt-get update` again later.
+
 ### `EXPKEYSIG`, `NO_PUBKEY`, `The following signatures were invalid`
 
 ```
