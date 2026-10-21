@@ -2,7 +2,7 @@
 ### check-latest.sh: show the latest PHP release per branch, as published by php.net and the package sources
 ### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, apt (Ubuntu/Debian), pacman/AUR (Arch, Omarchy)
 ### Usage: ./check-latest.sh [--md] [-F "8.5.12 8.4.27 8.3.36 8.2.35"] [-u "noble jammy"] [-d "trixie bookworm"] [8.2 8.3 8.4 8.5]
-### Needs curl and jq. A version behind the expected (-F/--fixed) one is marked with '<'. --md = Markdown table.
+### Needs curl and jq. A version behind the expected (-F/--fixed) one is marked with '<' (--md: 🟢 ok / 🟠 not yet / 🔴 not available).
 set -uo pipefail
 
 branches=(8.2 8.3 8.4 8.5)
@@ -47,9 +47,11 @@ newest() { grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1; }
 
 src_phpnet() { fetch "https://www.php.net/releases/?json&version=$1" | jq -r '.version // empty'; }
 
+github_token="${GITHUB_TOKEN:-$(gh auth token 2>/dev/null)}" # without a token: 60 requests/hour
+
 src_github() {
   # tags exist before the announcement and before any package is built
-  fetch "https://api.github.com/repos/php/php-src/git/matching-refs/tags/php-$1." |
+  fetch ${github_token:+-H "Authorization: Bearer $github_token"} "https://api.github.com/repos/php/php-src/git/matching-refs/tags/php-$1." |
     jq -r '.[].ref | sub("refs/tags/php-"; "")' | newest
 }
 
@@ -177,13 +179,17 @@ for i in "${!rows[@]}"; do
   cells=()
   for b in "${branches[@]}"; do
     v=$(cat "$tmp_dir/cell.$i.$b")
-    mark=""
-    is_behind "$v" "${expected[$b]:-${reference[$b]}}" && mark=" <"
-    cells+=("${v:--}$mark")
+    if [[ -z "$v" ]]; then
+      ((md)) && cells+=("🔴") || cells+=("-")
+    elif is_behind "$v" "${expected[$b]:-${reference[$b]}}"; then
+      ((md)) && cells+=("🟠 $v") || cells+=("$v <")
+    else
+      ((md)) && cells+=("🟢 $v") || cells+=("$v")
+    fi
   done
   print_row "$label" "$os" "${cells[@]}"
 done
 if ((md)); then
   echo
-  echo "_'<' = behind the expected version. Checked $(date -u '+%Y-%m-%d %H:%M') UTC._"
+  echo "_🟢 = has the expected version, 🟠 = not yet, 🔴 = not available. Checked $(date -u '+%Y-%m-%d %H:%M') UTC._"
 fi
