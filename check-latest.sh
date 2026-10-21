@@ -51,7 +51,7 @@ failed() { touch "$tmp_dir/fail.${cell_id:-x}"; }
 fetch() {
   local body code
   body=$(mktemp "$tmp_dir/body.XXXXXX")
-  code=$(curl -sL --max-time 20 --retry 2 --retry-delay 3 -o "$body" -w '%{http_code}' "$@" 2>/dev/null)
+  code=$(curl -sL --max-time "${fetch_timeout:-20}" --retry 2 --retry-delay 3 --retry-max-time 60 -o "$body" -w '%{http_code}' "$@" 2>/dev/null)
   case $code in
   2*) cat "$body" ;;
   404) ;;
@@ -141,7 +141,7 @@ src_aur() {
 
 src_remi() {
   # Remi repo (RHEL/AlmaLinux/Rocky): one folder per branch and EL release ($2)
-  fetch "https://rpms.remirepo.net/enterprise/$2/php${1//./}/x86_64/" |
+  fetch_timeout=60 fetch "https://rpms.remirepo.net/enterprise/$2/php${1//./}/x86_64/" |
     grep -oE "php-cli-$1\.[0-9]+-" | sed -E 's/^php-cli-//; s/-$//' | newest
 }
 
