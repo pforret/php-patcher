@@ -2,6 +2,9 @@
 
 Check — and optionally patch — the PHP version (CLI and every PHP-FPM) on all your SSH servers.
 
+> **TL;DR** — rather not run a script on your machine? [docs/DIY.md](docs/DIY.md) has the handful of
+> commands it boils down to: check your PHP versions and patch them by hand, on Linux, macOS or Windows.
+
 For each server it prints the OS and every PHP binary with a status:
 
 - `OK` — at or above the first fixed release of its branch
@@ -71,6 +74,12 @@ include="forge"
 - for `--patch`: `sudo` on the server (without a password, or you get asked for it; with `-f` or
   without a terminal it prints the `ssh -t` command to run yourself), and apt (Debian/Ubuntu, incl. the Ondřej Surý
   packages used by Forge) or dnf/yum (RHEL/Alma/Rocky, Remi)
+
+## Troubleshooting
+
+- [docs/DIY.md](docs/DIY.md): the same checks and patches by hand, without this script (Linux, macOS, Windows)
+- [docs/faq/ondrej.md](docs/faq/ondrej.md): Ondřej's PHP/nginx/apache2 repositories (403, Ubuntu 20.04, release lag)
+- [docs/faq/apt.md](docs/faq/apt.md): obsolete apt sources, expired keys, `Unmet dependencies`
 
 ## Tests
 
