@@ -43,10 +43,12 @@ in between. Each takes 15–45 minutes, the sites are down or degraded during it
 ```bash
 # 1. a backup you can restore: a provider snapshot (DigitalOcean, Gandi, ...) and database dumps
 sudo mysqldump --all-databases --single-transaction > ~/all-databases.sql
+chmod 600 ~/all-databases.sql          # it holds every database, including the user hashes
 
 # 2. note what is installed, to reinstall PHP after the upgrade
 dpkg --get-selections | grep -E '^php' | awk '{print $1}' > ~/php-packages.txt
 php -m > ~/php-modules.txt
+cat ~/php-packages.txt                 # must not be empty
 
 # 3. free disk space (at least 5 GB on /, 300 MB on /boot)
 df -h / /boot
@@ -64,6 +66,37 @@ Also check:
 - Port 1022 is open in the firewall (`sudo ufw allow 1022/tcp`): over SSH, the upgrader starts an
   extra sshd on that port as a fallback in case the main one breaks halfway.
 - You have console access through the provider's web panel, in case SSH does not come back.
+- Where MySQL comes from: `dpkg -l | grep -E 'mysql-(community-)?server'`. Ubuntu's
+  `mysql-server-8.0` needs no attention. Oracle's `mysql-community-server` (from `repo.mysql.com`,
+  common on Forge servers) loses its source during the upgrade, see the summary step below.
+  Oracle 8.4 or 9.x has no Ubuntu equivalent: a swap to Ubuntu's 8.0 would be a downgrade
+  that cannot start on the existing data directory.
+
+### DigitalOcean: replace the mirror first
+
+DigitalOcean droplets use `mirrors.digitalocean.com` in `/etc/apt/sources.list`. The upgrader does
+not know that mirror: it disables those lines instead of rewriting them to the new release, finds no
+Ubuntu archive left, and aborts with
+
+```
+the essential package 'ubuntu-minimal' could not be located
+```
+
+`/var/log/dist-upgrade/main.log` then shows `was disabled (unknown mirror)` for each line. Nothing
+is changed on the server, but switch to the official archive before (re)trying:
+
+```bash
+sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
+sudo sed -i 's|http://mirrors.digitalocean.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+sudo apt-get update
+```
+
+If `apt-get update` now warns `Target ... is configured multiple times in /etc/apt/sources.list:22
+and /etc/apt/sources.list:58`, a line that already pointed at `archive.ubuntu.com` now duplicates a
+renamed one: check it with `sed -n '58p' /etc/apt/sources.list` and comment it out.
+
+To list the active sources, use `grep -h '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list`:
+a recursive `grep -r` also reads the `.save` and `.distUpgrade` backups, which apt ignores.
 
 ### Upgrade to 22.04
 
@@ -75,6 +108,18 @@ What to answer:
 
 - **Third-party sources disabled**: yes. All PPAs and vendor repositories are commented out
   during the upgrade, you re-add them for the new release afterwards.
+- **Do you want to start the upgrade? y/N/d**: press `d` first and read the remove list.
+  `mysql-community-*` or `php*` packages in it mean trouble: answer `N` (nothing has changed
+  yet) and sort that out first. These removals are normal:
+  - renamed or replaced libraries: `libgcc1` (now `libgcc-s1`), `fuse` (now `fuse3`),
+    `libsemanage1`, `libsepol1-dev`, `libtss2-esys0`;
+  - desktop leftovers: `gir1.2-mutter-6`, `libmutter-6-0`, `libwacom2`, `libgupnp-*`,
+    `python3-twisted-bin`;
+  - development headers such as `libmagickwand-dev`, `libcairo2-dev`, `librsvg2-dev`,
+    `libfreetype-dev`, `libfontconfig1-dev`, `libwmf-dev`, and `libappindicator3-1`. They were
+    installed to compile `imagick` with pecl, the Node `canvas` module, or for Chrome/Puppeteer
+    (Browsershot). The runtime libraries stay; note the list and reinstall the headers afterwards
+    if something still needs compiling.
 - **Modified configuration files** (`sshd_config`, `php.ini`, `my.cnf`, nginx, ...): keep your
   version (`N`, the default) unless you know the new one is better. Diff with `D` if unsure.
 - **Remove obsolete packages**: **No**. The PHP 8.x packages came from the PPA that is now
@@ -91,13 +136,35 @@ sudo apt-get install $(cat ~/php-packages.txt)   # rebuilds PHP for jammy
 sudo apt-get full-upgrade
 ```
 
+With Oracle's MySQL, check it runs, then point its source at the new release:
+
+```bash
+systemctl status mysql
+mysql --version
+sudo dpkg-reconfigure mysql-apt-config        # pick jammy and the same MySQL series
+sudo apt-get update
+```
+
+If MySQL does not start, do not delete `/var/lib/mysql` or force an upgrade: read
+`sudo journalctl -u mysql -n 50` first; the dump and the snapshot are the fallback.
+
+Re-enable the other third-party sources the upgrader commented out (`# disabled on upgrade to
+jammy`) in `/etc/apt/sources.list.d/`. Sources with `nodistro` or no release in the URL (nodesource,
+DigitalOcean agents) only need the line uncommented. If needed, reinstall the development headers that
+were removed:
+
+```bash
+sudo apt-get install libmagickwand-dev libcairo2-dev librsvg2-dev libfreetype-dev libfontconfig1-dev
+```
+
 Check that the sites work before going on.
 
 ### Upgrade to 24.04
 
 Same steps once more: `sudo apt-get update && sudo apt-get full-upgrade`, reboot,
 `sudo do-release-upgrade`, the same answers, reboot, re-add the PHP source for noble and
-reinstall `~/php-packages.txt`.
+reinstall `~/php-packages.txt`, then `sudo dpkg-reconfigure mysql-apt-config` for noble.
+On DigitalOcean, first check that `mirrors.digitalocean.com` has not come back in the sources.
 
 24.04 uses the deb822 format for apt sources: the Ubuntu archive moves to
 `/etc/apt/sources.list.d/ubuntu.sources`, and `add-apt-repository` writes `.sources` files.
@@ -110,7 +177,8 @@ php-patcher --patch host <server>        # now finds newer PHP packages
 ```
 
 Clean up the leftovers: `.distUpgrade` and `.save` files in `/etc/apt/sources.list.d/`, the
-`~/php-packages.txt` list, and the port 1022 firewall rule (`sudo ufw delete allow 1022/tcp`).
+`~/php-packages.txt` list, `~/all-databases.sql`, `/etc/apt/sources.list.bak`, and the port 1022
+firewall rule (`sudo ufw delete allow 1022/tcp`).
 
 ## What changes between 20.04 and 24.04
 
@@ -128,6 +196,10 @@ Clean up the leftovers: `.distUpgrade` and `.save` files in `/etc/apt/sources.li
 
 - **`No new release found`**: `Prompt=lts` missing, 20.04 not fully updated, or (for 22.04 → 24.04)
   the server cannot reach `changelogs.ubuntu.com`.
+- **`the essential package 'ubuntu-minimal' could not be located`**: the Ubuntu mirror is unknown
+  to the upgrader (DigitalOcean's, or another provider's) and was disabled. See
+  [DigitalOcean: replace the mirror first](#digitalocean-replace-the-mirror-first). Details are in
+  `/var/log/dist-upgrade/main.log`.
 - **Upgrade interrupted**: log in again (port 22 or 1022, or the provider console), then
   `sudo screen -x` to reattach, or finish with `sudo dpkg --configure -a && sudo apt-get -f install`.
 - **PHP gone after the upgrade**: you answered yes to removing obsolete packages. Re-add the PHP
