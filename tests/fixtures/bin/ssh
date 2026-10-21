@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # fake ssh for the bats tests: "ssh -G" goes to the real ssh (it does not connect),
 # anything else prints canned output, fails for hosts named bad*,
-# or wants a sudo password (exit 3) for hosts named sudo*
+# wants a sudo password (exit 3) for hosts named sudo*,
+# or stays below --fixed after the upgrade (exit 5) for hosts named waiting*
 real_ssh="${REAL_SSH:-/usr/bin/ssh}"
 for arg in "$@"; do
   [[ $arg == "-G" ]] && exec "$real_ssh" "$@"
@@ -27,6 +28,27 @@ if [[ $host == sudo* && $sudo_pass != secret ]]; then
   echo "  ERROR: needs a sudo password"
   echo "SUDO_CMD sudo apt-get update && sudo apt-get install -y --only-upgrade php8.4-fpm"
   exit 3
+fi
+if [[ $host == current* ]]; then
+  # host that is already on the newest packages, but not on --fixed (exit 4)
+  echo "  FakeOS 1.0"
+  echo "  php (cli)      8.4.26   PATCH (fixed in 8.4.27)"
+  echo "  ERROR: no newer PHP packages in the package sources yet (the new release is not built yet)"
+  exit 4
+fi
+if [[ $host == focal* ]]; then
+  # Ubuntu 20.04: nothing newer, ever (exit 4)
+  echo "  Ubuntu 20.04.6 LTS"
+  echo "  WARNING: Ubuntu 20.04 gets no newer PHP 8.x packages (no PPA anymore): move to Ubuntu 24.04"
+  echo "  ERROR: no newer PHP packages: Ubuntu 20.04 has no PHP repository anymore"
+  exit 4
+fi
+if [[ $host == waiting* ]]; then
+  # host that got upgraded, but not up to --fixed (exit 5)
+  echo "  FakeOS 1.0"
+  echo "  php (cli)      8.4.26   PATCH (fixed in 8.4.27)"
+  echo "  ERROR: upgraded, but still below the fixed version"
+  exit 5
 fi
 echo "  FakeOS 1.0"
 echo "  php (cli)      8.4.27   OK"

@@ -188,7 +188,7 @@ git_hosts='^(github\.com|gitlab\.com|bitbucket\.org|ssh\.dev\.azure\.com|codeber
 function do_hosts() {
   # do_hosts <host|file|auto>: collect the hosts, then show (and with --patch: patch) PHP on each of them
   local source="$1"
-  local -a hosts=() valid=() failed=()
+  local -a hosts=() valid=() failed=() waiting=()
   local h choice remote err_file out err rc sudo_pass tries user manual release_dates
   check_fixed
   ((pick && list)) && IO:die "--pick and --list cannot be combined"
@@ -270,12 +270,23 @@ function do_hosts() {
     out=$(grep -v '^SUDO_CMD ' <<<"$out")
     # drop the OpenSSH 10 post-quantum warning ("** WARNING: connection is not using a post-quantum ...")
     err=$(grep -v '^\*\* ' "$err_file")
+    # exit 4 = nothing newer in apt, exit 5 = upgraded but below --fixed: both expected while the
+    # fixed versions are not out yet, except on an OS that gets no PHP updates at all (Ubuntu 20.04)
+    if ((rc == 4 || rc == 5)) && is_unreleased && [[ $out != *"no PPA anymore"* ]]; then
+      out=$(sed -e 's/ERROR: no newer PHP packages in the package sources.*/WARNING: already on the newest packages there are, the fixed versions are not out yet/' \
+        -e 's/ERROR: upgraded, but still below the fixed version/WARNING: upgraded to the newest packages there are, the fixed versions are not out yet/' <<<"$out")
+      rc=0
+      waiting+=("$h")
+    fi
     show_host "$h" "$rc" "$out" "$err"
     [[ -n "$manual" ]] && IO:print "  run it yourself: ${txtBold}ssh -t $h '$manual'${txtReset}"
     ((rc)) && failed+=("$h")
   done
   rm -f "$err_file"
 
+  if ((${#waiting[@]})); then
+    IO:alert "${#waiting[@]} host(s) only got the previous patch: run --patch again after $released UTC (plus some hours for apt): $(printf '%s ' "${waiting[@]}")"
+  fi
   if ((${#failed[@]})); then
     IO:print "${txtError}${char_fail} ${#failed[@]}/${#hosts[@]} host(s) FAILED${txtReset}: $(printf '%s ' "${failed[@]}")" >&2
     IO:log "FAILED: $(printf '%s ' "${failed[@]}")"
@@ -284,7 +295,7 @@ function do_hosts() {
     exit 1
   fi
   if ((patch)); then
-    IO:success "${#hosts[@]} host(s) patched"
+    ((${#hosts[@]} > ${#waiting[@]})) && IO:success "$((${#hosts[@]} - ${#waiting[@]})) host(s) patched"
   else
     IO:success "${#hosts[@]} host(s) checked"
   fi
@@ -372,16 +383,25 @@ function check_fixed() {
     IO:die "invalid --released [$released], use 'YYYY-MM-DD HH:MM' (UTC)"
 }
 
+function is_unreleased() {
+  # true while the --fixed versions are not out yet (before --released)
+  [[ -n "$released" && "$(date -u '+%Y-%m-%d %H:%M')" < "$released" ]]
+}
+
 function warn_unreleased() {
   # before --released, no server can get the --fixed versions yet: say so instead of letting every host fail
   local now left="" h m
   now=$(date -u '+%Y-%m-%d %H:%M')
-  [[ -n "$released" && "$now" < "$released" ]] || return 0
+  is_unreleased || return 0
   if [[ ${now% *} == "${released% *}" ]]; then
     h=${now#* } m=${released#* }
     left=" (in $(((10#${m%:*} * 60 + 10#${m#*:}) - (10#${h%:*} * 60 + 10#${h#*:}))) min)"
   fi
-  IO:alert "the --fixed versions ($fixed) are only released at $released UTC$left: until then, and until the packages reach apt (hours later), hosts can only get the previous patch and stay PATCH"
+  IO:print "${txtWarn}${char_alert} PHP ${fixed// / · } not released yet${txtReset}
+   php.net:  $released UTC$left
+   apt:      some hours after that
+   until then, --patch can only reach the previous patch release (status stays PATCH)
+" >&2
 }
 
 function hosts_from_list() {
@@ -530,7 +550,11 @@ do_upgrade() {
     as_root "$pm" -y -q upgrade 'php*' >/dev/null || return 1
   fi
   if [[ $(php_packages) == "$before" ]]; then
-    echo "  ERROR: no newer PHP packages in the package sources (OS too old for its PHP repo?)"
+    if ((no_php_repo)); then
+      echo "  ERROR: no newer PHP packages: Ubuntu $os_version has no PHP repository anymore"
+    else
+      echo "  ERROR: no newer PHP packages in the package sources yet (the new release is not built yet)"
+    fi
     return 4
   fi
   for svc in "${fpm[@]}"; do
@@ -545,7 +569,9 @@ echo "  $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -sr)"
 os_id=$(. /etc/os-release 2>/dev/null && echo "$ID")
 os_version=$(. /etc/os-release 2>/dev/null && echo "$VERSION_ID")
 # Ondřej's PPA (PHP 8.x on Ubuntu/Forge) only builds for Ubuntu LTS releases in standard support
+no_php_repo=0
 if [[ $os_id == ubuntu && ${os_version%%.*} =~ ^[0-9]+$ ]] && ((${os_version%%.*} <= 20)); then
+  no_php_repo=1
   echo "  WARNING: Ubuntu $os_version gets no newer PHP 8.x packages (no PPA anymore): move to Ubuntu 24.04"
 fi
 show
@@ -555,7 +581,7 @@ if ((upgrade)); then
   after=$(show); echo "$after"
   if grep -q 'PATCH (' <<<"$after"; then
     echo "  ERROR: upgraded, but still below the fixed version"
-    exit 4
+    exit 5
   fi
 fi
 REMOTE

@@ -59,7 +59,7 @@ clean and `apt-get install --only-upgrade php8.3-fpm` silently does nothing. Som
 switched to the `ppa.setup-php.com` mirror, which now returns 404 for focal.
 
 `php-patcher` warns about this for Ubuntu 20.04 and older, and a `--patch` run ends with
-`ERROR: no newer PHP packages in the package sources`.
+`ERROR: no newer PHP packages: Ubuntu 20.04 has no PHP repository anymore`.
 
 Fix: there is no apt source left for PHP 8.x on focal. Move the sites to a new Ubuntu 24.04 server
 (easiest with Forge), or upgrade in place 20.04 → 22.04 → 24.04. Going to 22.04 only buys time

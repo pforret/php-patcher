@@ -49,7 +49,9 @@ Flags go **before** the verb (`php-patcher --patch auto`, not `php-patcher auto 
 `auto` skips wildcard and negated `Host` patterns, git hosts (github.com, gitlab.com, bitbucket.org, …)
 and aliases of a server that is already in the list (same HostName and Port).
 
-The exit code is 1 when one or more hosts failed (ssh error or upgrade error).
+The exit code is 1 when one or more hosts failed (ssh error or upgrade error). A host that
+was upgraded but is still below `--fixed` only counts as failed after `--released`: before that,
+it is listed as "only got the previous patch", to patch again later.
 
 ## Fixed versions
 

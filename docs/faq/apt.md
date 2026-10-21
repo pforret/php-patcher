@@ -90,7 +90,7 @@ only notice because versions never move:
 apt-cache policy php8.3-fpm     # "Installed" stays the newest "Candidate", with only the local /var/lib/dpkg/status as source
 ```
 
-`php-patcher --patch` reports this as `ERROR: no newer PHP packages in the package sources`.
+`php-patcher --patch` reports this as `ERROR: no newer PHP packages ...`: on Ubuntu 20.04 "has no PHP repository anymore", elsewhere "in the package sources yet".
 
 ## Related: `Unmet dependencies` after an interrupted upgrade
 

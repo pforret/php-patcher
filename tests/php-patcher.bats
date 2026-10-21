@@ -163,14 +163,38 @@ teardown() {
 @test "before --released there is a warning, after it there is none" {
   run "$SCRIPT" -R "2999-01-01 14:00" host web1
   [[ $status -eq 0 ]]
-  [[ $output == *"only released at 2999-01-01 14:00 UTC"* ]]
+  [[ $output == *"not released yet"*"2999-01-01 14:00 UTC"* ]]
   run "$SCRIPT" -R "2000-01-01 14:00" host web1
-  [[ $output != *"only released"* ]]
+  [[ $output != *"not released yet"* ]]
   run "$SCRIPT" -R "" host web1
-  [[ $output != *"only released"* ]]
+  [[ $output != *"not released yet"* ]]
 }
 
 @test "--released rejects anything but YYYY-MM-DD HH:MM" {
   run "$SCRIPT" -R "tomorrow" host web1
   [[ $output == *"invalid --released"* ]]
+}
+
+@test "below --fixed after patching is a warning before --released, a failure after it" {
+  run "$SCRIPT" -f --patch -R "2999-01-01 14:00" host waiting1,web1
+  [[ $status -eq 0 ]]
+  [[ $output == *"the fixed versions are not out yet"* ]]
+  [[ $output == *"1 host(s) only got the previous patch"*"waiting1"* ]]
+  [[ $output == *"1 host(s) patched"* ]]
+  run "$SCRIPT" -f --patch -R "2000-01-01 14:00" host waiting1
+  [[ $status -eq 1 ]]
+  [[ $output == *"still below the fixed version"* ]]
+  [[ $output == *"FAILED"* ]]
+}
+
+@test "nothing newer in apt is a warning before --released, except on Ubuntu 20.04" {
+  run "$SCRIPT" -f --patch -R "2999-01-01 14:00" host current1
+  [[ $status -eq 0 ]]
+  [[ $output == *"already on the newest packages there are"* ]]
+  [[ $output == *"only got the previous patch"*"current1"* ]]
+  run "$SCRIPT" -f --patch -R "2999-01-01 14:00" host focal1
+  [[ $status -eq 1 ]]
+  [[ $output == *"FAILED"*"focal1"* ]]
+  run "$SCRIPT" -f --patch -R "2000-01-01 14:00" host current1
+  [[ $status -eq 1 ]]
 }
