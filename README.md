@@ -93,6 +93,7 @@ include="forge"
 - [docs/DIY.md](docs/DIY.md): the same checks and patches by hand, without this script (Linux, macOS, Windows)
 - [docs/faq/ondrej.md](docs/faq/ondrej.md): Ondřej's PHP/nginx/apache2 repositories (403, Ubuntu 20.04, release lag)
 - [docs/faq/apt.md](docs/faq/apt.md): obsolete apt sources, expired keys, `Unmet dependencies`
+- [docs/faq/ubuntu20.md](docs/faq/ubuntu20.md): upgrading an Ubuntu 20.04 server to 22.04 or 24.04 (no PHP 8.x packages left for focal)
 
 ## Tests
 

@@ -83,7 +83,7 @@ switched to the `ppa.setup-php.com` mirror, which now returns 404 for focal.
 `ERROR: no newer PHP packages: Ubuntu 20.04 has no PHP repository anymore`.
 
 Fix: there is no apt source left for PHP 8.x on focal. Move the sites to a new Ubuntu 24.04 server
-(easiest with Forge), or upgrade in place 20.04 → 22.04 → 24.04. Going to 22.04 only buys time
+(easiest with Forge), or upgrade in place 20.04 → 22.04 → 24.04, see [ubuntu20.md](ubuntu20.md). Going to 22.04 only buys time
 until April 2027.
 
 Building PHP from source or running it in Docker also works, but takes the server out of Forge's

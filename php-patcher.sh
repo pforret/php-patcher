@@ -581,11 +581,29 @@ do_upgrade() {
       echo "  WARNING: apt-get update had errors (see below), upgrading from the sources that did work"
     # shellcheck disable=SC2086
     echo "PROGRESS apt-get install: $(wc -w <<<"$pkgs" | tr -d ' ') packages"
-    as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --only-upgrade \
-      -o Dpkg::Options::=--force-confold $pkgs >/dev/null || {
-      echo "  ERROR: apt-get install failed; for 'Unmet dependencies' repair apt first: sudo apt-get -f install && sudo dpkg --configure -a"
+    # a busy mirror (Launchpad 503s on PHP release day) fails the download before anything is installed:
+    # retry, apt keeps the .deb files it already fetched
+    local attempt err=""
+    for attempt in 1 2 3; do
+      # shellcheck disable=SC2086
+      err=$(as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --only-upgrade \
+        -o Dpkg::Options::=--force-confold $pkgs 2>&1 >/dev/null) && { err=""; break; }
+      grep -qE 'Failed to fetch|Unable to fetch some archives' <<<"$err" || break
+      ((attempt < 3)) || break
+      echo "  WARNING: package download failed (mirror busy?), retrying in $((attempt * 30))s"
+      echo "PROGRESS apt-get install: retry $((attempt + 1))/3"
+      sleep $((attempt * 30))
+    done
+    if [[ -n $err ]]; then
+      if grep -qE 'Failed to fetch|Unable to fetch some archives' <<<"$err"; then
+        echo "  ERROR: could not download the packages (nothing was installed); the package server is down or overloaded, try again later"
+        grep -qE '(launchpadcontent\.net|launchpad\.net)/ondrej/php' <<<"$err" && sury_tip
+      else
+        echo "  ERROR: apt-get install failed; for 'Unmet dependencies' repair apt first: sudo apt-get -f install && sudo dpkg --configure -a"
+      fi
+      echo "$err" >&2
       return 1
-    }
+    fi
   else
     echo "  $(basename "$pm"): upgrading php*"
     echo "PROGRESS $(basename "$pm") upgrade php*"
@@ -617,6 +635,7 @@ no_php_repo=0
 if [[ $os_id == ubuntu && ${os_version%%.*} =~ ^[0-9]+$ ]] && ((${os_version%%.*} <= 20)); then
   no_php_repo=1
   echo "  WARNING: Ubuntu $os_version gets no newer PHP 8.x packages (no PPA anymore): move to Ubuntu 24.04"
+  echo "           (packages.sury.org/php has no Ubuntu $os_version either: only supported releases get backports)"
 fi
 show
 if ((upgrade)); then
