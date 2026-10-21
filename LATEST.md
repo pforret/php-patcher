@@ -22,8 +22,8 @@
 | dnf remi el9 | RHEL/Alma/Rocky 9 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | dnf remi el8 | RHEL/Alma/Rocky 8 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | apk alpine v3.24 | Alpine 3.24 | 🔴 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
-| apk alpine edge | Alpine edge | 🔴 | 🟠 8.3.35 | 🟠 8.4.26 | 🟠 8.5.11 |
+| apk alpine edge | Alpine edge | 🔴 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | pacman extra | Arch / Omarchy | 🔴 | 🟢 8.3.36 | 🔴 | 🟢 8.5.12 |
 | AUR phpXY | Arch / Omarchy | 🟠 8.2.33 | 🟠 8.3.33 | 🟠 8.4.24 | 🟠 8.5.9 |
 
-_🟢 = has the expected version, 🟠 = not yet, 🔴 = not available, ⚠️ = lookup failed. Checked 2026-10-21 19:47 UTC._
+_🟢 = has the expected version, 🟠 = not yet, 🔴 = not available, ⚠️ = lookup failed. Checked 2026-10-21 20:47 UTC._
