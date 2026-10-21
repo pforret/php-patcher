@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ### check-latest.sh: show the latest PHP release per branch, as published by php.net and the package sources
-### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, winget/choco/scoop (Windows), apt (Ubuntu/Debian), dnf/Remi (RHEL/Alma/Rocky), apk (Alpine), pacman/AUR (Arch, Omarchy)
+### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, winget/choco/scoop (Windows), apt (Ubuntu/Debian), dnf/Remi (RHEL/Alma/Rocky), Plesk (Linux/Windows), apk (Alpine), pacman/AUR (Arch, Omarchy)
 ### Usage: ./check-latest.sh [--md] [-F "8.5.12 8.4.27 8.3.36 8.2.35"] [-u "noble jammy"] [-d "trixie bookworm"] [-r "10 9 8"] [-a "v3.24 edge"] [8.2 8.3 8.4 8.5]
 ### Needs curl and jq. A version behind the expected (-F/--fixed) one is marked with '<' (--md: 🟢 ok / 🟠 not yet / 🔴 not available / ⚠️ lookup failed = '?').
 set -uo pipefail
@@ -10,6 +10,7 @@ ubuntu_series="noble jammy" # focal (20.04): the PPA has no PHP packages for it
 debian_series="trixie bookworm"
 rhel_series="10 9 8"
 alpine_series="v3.24 edge"
+plesk_series="noble"
 fixed="8.5.12 8.4.27 8.3.36 8.2.35" # same default as php-patcher --fixed
 md=0
 max_jobs=16
@@ -152,6 +153,28 @@ src_alpine() {
   awk -v pkg="P:php${1//./}" '$0==pkg {p=1; next} /^P:/ {p=0} p && /^V:/ {print substr($0, 3)}' "$index" | sed -E 's/-r[0-9]+$//' | newest
 }
 
+src_plesk() {
+  # Plesk's own PHP builds (plesk-phpXY), one apt repo per branch; series $2
+  fetch "https://autoinstall.plesk.com/PHP${1//./}_17/dists/$2/all/binary-amd64/Packages.gz" | gunzip 2>/dev/null |
+    awk -v pkg="plesk-php${1//./}-cli" '$1=="Package:" {p=$2} $1=="Version:" && p==pkg {print $2}' | sed -E 's/-.*//' | newest
+}
+
+src_plesk_win() {
+  # Plesk for Windows: patch + build number glued together, 8.3.3520 = 8.3.35 build 20, 8.5.11020 = 8.5.11 build 020
+  # so take the longest patch prefix that is not newer than php.net's
+  local glued latest k patch=""
+  glued=$(fetch "https://autoinstall-win.plesk.com/PHP${1//./}-WIN/php-$1-ms-noarch.inf3" |
+    grep -m1 -oE "<package [^>]*version=\"$1\.[0-9]+\"" | grep -oE "version=\"$1\.[0-9]+" | sed "s/^version=\"$1\.//")
+  [[ -z "$glued" ]] && return
+  latest=$(src_phpnet "$1")
+  latest=${latest##*.}
+  for ((k = 1; k < ${#glued}; k++)); do
+    [[ "${glued:k}" =~ ^0?[0-9]0$ ]] || continue
+    ((10#${glued:0:k} <= ${latest:-99})) && patch=$((10#${glued:0:k}))
+  done
+  [[ -n "$patch" ]] && echo "$1.$patch"
+}
+
 src_windows() {
   # official Windows builds (also what winget/choco/scoop download)
   fetch "https://windows.php.net/downloads/releases/releases.json" | jq -r --arg b "$1" '.[$b].version // empty'
@@ -185,9 +208,11 @@ declare -A link=([endoflife.date]="https://endoflife.date/php")
 # label|OS|function|argument
 rows=("php.net|source|src_phpnet" "php-src git tag|source|src_github" "endoflife.date|-|src_eol"
   "Homebrew core|macOS|src_brew" "brew shivammathur/php|macOS|src_shivammathur" "Docker php image|Docker|src_docker"
-  "windows.php.net|Windows|src_windows" "winget|Windows|src_winget" "Chocolatey|Windows|src_choco" "Scoop versions|Windows|src_scoop")
+  "windows.php.net|Windows|src_windows" "winget|Windows|src_winget" "Chocolatey|Windows|src_choco" "Scoop versions|Windows|src_scoop"
+  "plesk windows|Windows|src_plesk_win")
 for s in $ubuntu_series; do rows+=("apt ondrej $s|${release[$s]:-Ubuntu}|src_ondrej|$s"); done
 for s in $debian_series; do rows+=("apt sury $s|${release[$s]:-Debian}|src_sury|$s"); done
+for s in $plesk_series; do rows+=("plesk $s|${release[$s]:-Linux}|src_plesk|$s"); done
 for s in $rhel_series; do rows+=("dnf remi el$s|RHEL/Alma/Rocky $s|src_remi|$s"); done
 for s in $alpine_series; do rows+=("apk alpine $s|Alpine ${s#v}|src_alpine|$s"); done
 rows+=("pacman extra|Arch / Omarchy|src_arch" "AUR phpXY|Arch / Omarchy|src_aur")
