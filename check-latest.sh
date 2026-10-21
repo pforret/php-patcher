@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ### check-latest.sh: show the latest PHP release per branch, as published by php.net and the package sources
-### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, apt (Ubuntu/Debian), pacman/AUR (Arch, Omarchy)
+### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, winget/choco/scoop (Windows), apt (Ubuntu/Debian), pacman/AUR (Arch, Omarchy)
 ### Usage: ./check-latest.sh [--md] [-F "8.5.12 8.4.27 8.3.36 8.2.35"] [-u "noble jammy"] [-d "trixie bookworm"] [8.2 8.3 8.4 8.5]
 ### Needs curl and jq. A version behind the expected (-F/--fixed) one is marked with '<' (--md: 🟢 ok / 🟠 not yet / 🔴 not available / ⚠️ lookup failed = '?').
 set -uo pipefail
@@ -133,6 +133,27 @@ src_aur() {
   fetch "https://aur.archlinux.org/rpc/v5/info?arg[]=php${1//./}" | jq -r '.results[].Version' | sed -E 's/-.*//' | newest
 }
 
+src_windows() {
+  # official Windows builds (also what winget/choco/scoop download)
+  fetch "https://windows.php.net/downloads/releases/releases.json" | jq -r --arg b "$1" '.[$b].version // empty'
+}
+
+src_winget() {
+  # microsoft/winget-pkgs: one folder per version under manifests/p/PHP/PHP/<major>/<minor>
+  fetch ${github_token:+-H "Authorization: Bearer $github_token"} "https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/p/PHP/PHP/${1/.//}" |
+    jq -r '.[]?.name' | newest
+}
+
+src_choco() {
+  fetch "https://community.chocolatey.org/api/v2/FindPackagesById()?id='php'&\$filter=startswith(Version,'$1.')" |
+    grep -oE '<d:Version>[^<]+' | sed 's/<d:Version>//' | newest
+}
+
+src_scoop() {
+  # Scoop "versions" bucket: phpXY for every branch
+  fetch "https://raw.githubusercontent.com/ScoopInstaller/Versions/master/bucket/php${1//./}.json" | jq -r '.version // empty'
+}
+
 ## output
 
 declare -A release=([focal]="Ubuntu 20.04" [jammy]="Ubuntu 22.04" [noble]="Ubuntu 24.04" [resolute]="Ubuntu 26.04"
@@ -144,7 +165,8 @@ declare -A link=([endoflife.date]="https://endoflife.date/php")
 
 # label|OS|function|argument
 rows=("php.net|source|src_phpnet" "php-src git tag|source|src_github" "endoflife.date|-|src_eol"
-  "Homebrew core|macOS|src_brew" "brew shivammathur/php|macOS|src_shivammathur" "Docker php image|Docker|src_docker")
+  "Homebrew core|macOS|src_brew" "brew shivammathur/php|macOS|src_shivammathur" "Docker php image|Docker|src_docker"
+  "windows.php.net|Windows|src_windows" "winget|Windows|src_winget" "Chocolatey|Windows|src_choco" "Scoop versions|Windows|src_scoop")
 for s in $ubuntu_series; do rows+=("apt ondrej $s|${release[$s]:-Ubuntu}|src_ondrej|$s"); done
 for s in $debian_series; do rows+=("apt sury $s|${release[$s]:-Debian}|src_sury|$s"); done
 rows+=("pacman extra|Arch / Omarchy|src_arch" "AUR phpXY|Arch / Omarchy|src_aur")
