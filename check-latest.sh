@@ -6,7 +6,7 @@
 set -uo pipefail
 
 branches=(8.2 8.3 8.4 8.5)
-ubuntu_series="noble jammy focal"
+ubuntu_series="noble jammy" # focal (20.04): the PPA has no PHP packages for it
 debian_series="trixie bookworm"
 fixed="8.5.12 8.4.27 8.3.36 8.2.35" # same default as php-patcher --fixed
 md=0
