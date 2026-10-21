@@ -206,3 +206,10 @@ teardown() {
   [[ $output == *"W: Failed to fetch"* ]]
   [[ $output != *"FAILED"*"W: Failed to fetch"* ]]
 }
+
+@test "PROGRESS lines from the server only go to the progress line" {
+  run "$SCRIPT" host web1
+  [[ $status -eq 0 ]]
+  [[ $output == *"8.4.27"* ]]
+  [[ $output != *"PROGRESS"* ]]
+}

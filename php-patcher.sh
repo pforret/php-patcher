@@ -189,7 +189,7 @@ function do_hosts() {
   # do_hosts <host|file|auto>: collect the hosts, then show (and with --patch: patch) PHP on each of them
   local source="$1"
   local -a hosts=() valid=() failed=() waiting=()
-  local h choice remote err_file out err rc sudo_pass tries user manual release_dates
+  local h choice remote err_file out err rc sudo_pass tries user manual release_dates start line
   check_fixed
   ((pick && list)) && IO:die "--pick and --list cannot be combined"
 
@@ -251,11 +251,28 @@ function do_hosts() {
     sudo_pass=""
     tries=0
     while true; do
-      ((piped)) || IO:progress "$h ..."
-      # bash -s runs line 1, which reads line 2 (the sudo password) from the same stdin
-      # shellcheck disable=SC2029 # $patch and $fixed are meant to expand on this side
-      out=$(printf 'IFS= read -r sudo_pass\n%s\n%s\n' "$sudo_pass" "$remote" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" "bash -s -- $patch $fixed" 2>"$err_file")
-      rc=$?
+      start=$SECONDS
+      show_progress "$h" "$start" "connecting"
+      # read the server's output as it comes, to show it on the progress line;
+      # the last line is "EXIT <ssh exit code>", PROGRESS lines are only for the progress line
+      out="" rc=255
+      while IFS= read -r line; do
+        case "$line" in
+        "EXIT "*) rc=${line#EXIT } ;;
+        "PROGRESS "*) show_progress "$h" "$start" "${line#PROGRESS }" ;;
+        *)
+          out+="$line"$'\n'
+          show_progress "$h" "$start" "$line"
+          ;;
+        esac
+      done < <(
+        # bash -s runs line 1, which reads line 2 (the sudo password) from the same stdin
+        # shellcheck disable=SC2029 # $patch and $fixed are meant to expand on this side
+        printf 'IFS= read -r sudo_pass\n%s\n%s\n' "$sudo_pass" "$remote" |
+          ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" "bash -s -- $patch $fixed" 2>"$err_file"
+        echo "EXIT $?"
+      )
+      out=${out%$'\n'}
       ((piped)) || IO:progress " "
       # exit 3 = sudo needs a (correct) password: ask for it, unless -f or no terminal
       if ((rc != 3 || tries >= 3 || FORCE)) || ! Os:has_tty; then break; fi
@@ -301,6 +318,15 @@ function do_hosts() {
   fi
 }
 
+function show_progress() {
+  # show_progress <host> <start (SECONDS)> <message>: one overwritten line, cut to the screen width
+  ((piped)) && return 0
+  local msg width
+  msg="$1 ($((SECONDS - $2))s): $(Str:trim "$3")"
+  width=$(($(tput cols 2>/dev/null || echo 80) - 10))
+  IO:progress "${msg:0:width}"
+}
+
 function show_host() {
   # show_host <host> <exit code> <remote stdout> <ssh stderr>: one block per host,
   # header = host + OS (first line of the remote output), status words in colour
@@ -315,6 +341,7 @@ function show_host() {
         # day number, good enough for differences between dates (Julian day without the century rule)
         function day(ymd, a) { split(ymd, a, "-"); if (a[2] < 3) { a[1]--; a[2] += 12 }
           return int(365.25 * (a[1] + 4716)) + int(30.6001 * (a[2] + 1)) + a[3] }
+        function days_ago(n) { return n == 0 ? "today" : n == 1 ? "yesterday" : n " days ago" }
         FNR == NR   { released[$1] = $2; next }
         { age = "" }
         # x.y.z without a distro suffix (7.4.3-4ubuntu2 has backported fixes: its upstream date says little)
@@ -322,7 +349,7 @@ function show_host() {
           split(released[substr($0, RSTART, RLENGTH)], r, "-"); split(today, t, "-")
           m = (t[1] - r[1]) * 12 + (t[2] - r[2]) - (t[3] + 0 < r[3] + 0)
           age = "  " dim "released " released[substr($0, RSTART, RLENGTH)] ", " \
-            (m < 2 ? day(today) - day(released[substr($0, RSTART, RLENGTH)]) " days ago" : \
+            (m < 2 ? days_ago(day(today) - day(released[substr($0, RSTART, RLENGTH)])) : \
               m < 24 ? m " months ago" : int(m / 12) " years ago") off
         }
         / OK$/      { sub(/ OK$/, " " ok "OK" off) }
@@ -330,6 +357,7 @@ function show_host() {
         /EOL \(/    { sub(/EOL \(.*$/, bad "&" off) }
         /ERROR/     { $0 = bad $0 off }
         /WARNING:/  { $0 = warn $0 off }
+        /TIP:/      { $0 = ok $0 off }
         { print $0 age }' <(printf '%s\n' "${release_dates:-}") -)"
   fi
   # an ERROR line from the server already says why the host failed: then stderr is just extra info
@@ -496,6 +524,15 @@ as_root() {  # as_root <cmd...>: sudo, fed the password if one was given
   fi
 }
 
+sury_tip() {  # sury_tip: Ubuntu on Ondřej's PPA (or its mirror) and not yet on packages.sury.org: point there
+  local -a src=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources)
+  ((no_php_repo)) || [[ $os_id != ubuntu ]] && return 0
+  grep -qs 'packages\.sury\.org/php' "${src[@]}" && return 0
+  grep -qsE '(launchpadcontent\.net|launchpad\.net|setup-php\.com)/ondrej/php' "${src[@]}" || return 0
+  echo "  TIP: packages.sury.org/php, where the PPA is moving, often has a new release first:"
+  echo "       https://github.com/pforret/php-patcher/blob/main/docs/faq/ondrej.md#moving-to-packagessuryorg"
+}
+
 php_packages() {  # installed php packages + versions, to see if an upgrade changed anything
   if command -v dpkg-query >/dev/null; then
     dpkg-query -W -f='${binary:Package} ${Version}\n' 'php*' 'libapache2-mod-php*' 2>/dev/null
@@ -539,16 +576,19 @@ do_upgrade() {
     echo "  apt: upgrading $(wc -w <<<"$pkgs") php packages"
     # a dead source (old PPA, discontinued nodesource, ...) fails the whole update: carry on with the
     # sources that did update; the before/after compare tells whether PHP got anything newer
+    echo "PROGRESS apt-get update"
     as_root apt-get update -qq ||
       echo "  WARNING: apt-get update had errors (see below), upgrading from the sources that did work"
     # shellcheck disable=SC2086
+    echo "PROGRESS apt-get install: $(wc -w <<<"$pkgs" | tr -d ' ') packages"
     as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --only-upgrade \
       -o Dpkg::Options::=--force-confold $pkgs >/dev/null || {
-      echo "  ERROR: apt-get install failed; for 'Unmet dependencies' repair apt first: sudo dpkg --configure -a && sudo apt-get -f install"
+      echo "  ERROR: apt-get install failed; for 'Unmet dependencies' repair apt first: sudo apt-get -f install && sudo dpkg --configure -a"
       return 1
     }
   else
     echo "  $(basename "$pm"): upgrading php*"
+    echo "PROGRESS $(basename "$pm") upgrade php*"
     as_root "$pm" -y -q upgrade 'php*' >/dev/null || return 1
   fi
   if [[ $(php_packages) == "$before" ]]; then
@@ -556,10 +596,12 @@ do_upgrade() {
       echo "  ERROR: no newer PHP packages: Ubuntu $os_version has no PHP repository anymore"
     else
       echo "  ERROR: no newer PHP packages in the package sources yet (the new release is not built yet)"
+      sury_tip
     fi
     return 4
   fi
   for svc in "${fpm[@]}"; do
+    echo "PROGRESS restarting $svc"
     as_root systemctl restart "$svc" && echo "  restarted $svc"
   done
   if [[ -n $apache ]]; then
@@ -583,6 +625,7 @@ if ((upgrade)); then
   after=$(show); echo "$after"
   if grep -q 'PATCH (' <<<"$after"; then
     echo "  ERROR: upgraded, but still below the fixed version"
+    sury_tip
     exit 5
   fi
 fi

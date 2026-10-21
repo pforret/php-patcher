@@ -120,10 +120,15 @@ updates: on forge3, 214 packages were waiting.
 
 ```bash
 sudo apt-get -s -f install       # dry run: shows what the repair would do, needs no root
-sudo dpkg --configure -a
-sudo apt-get -f install
+sudo apt-get -f install          # fetches the missing versions and configures the half-done packages
+sudo dpkg --configure -a         # finishes anything else that was left unconfigured
 sudo apt-get upgrade             # catch up on everything that was blocked
 ```
+
+Run `apt-get -f install` first. `dpkg --configure -a` alone can't download anything: when a
+half-done package needs a newer version of another one, as here, it stops with
+`dependency problems - leaving unconfigured` and an error exit code, so a
+`dpkg --configure -a && apt-get -f install` chain never reaches the repair.
 
 ## Checking a server without sudo
 

@@ -52,5 +52,6 @@ if [[ $host == waiting* ]]; then
   exit 5
 fi
 echo "  FakeOS 1.0"
+echo "PROGRESS apt-get update"
 echo "  php (cli)      8.4.27   OK"
 echo "  args: $*"
