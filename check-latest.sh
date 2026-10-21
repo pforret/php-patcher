@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ### check-latest.sh: show the latest PHP release per branch, as published by php.net and the package sources
-### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, winget/choco/scoop (Windows), apt (Ubuntu/Debian), dnf/Remi (RHEL/Alma/Rocky), Plesk (Linux/Windows), apk (Alpine), pacman/AUR (Arch, Omarchy)
+### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, winget/choco/scoop (Windows), apt (Ubuntu/Debian), dnf/Remi (RHEL/Alma/Rocky), Plesk (Linux/Windows), cPanel ea-php, apk (Alpine), pacman/AUR (Arch, Omarchy)
 ### Usage: ./check-latest.sh [--md] [-F "8.5.12 8.4.27 8.3.36 8.2.35"] [-u "noble jammy"] [-d "trixie bookworm"] [-r "10 9 8"] [-a "v3.24 edge"] [8.2 8.3 8.4 8.5]
 ### Needs curl and jq. A version behind the expected (-F/--fixed) one is marked with '<' (--md: 🟢 ok / 🟠 not yet / 🔴 not available / ⚠️ lookup failed = '?').
 set -uo pipefail
@@ -175,6 +175,13 @@ src_plesk_win() {
   [[ -n "$patch" ]] && echo "$1.$patch"
 }
 
+src_cpanel() {
+  # cPanel EasyApache 4: the package repo needs a license, so read the spec on the production branch
+  fetch ${github_token:+-H "Authorization: Bearer $github_token"} -H "Accept: application/vnd.github.raw" \
+    "https://api.github.com/repos/CpanelInc/ea-php${1//./}/contents/SPECS/ea-php${1//./}.spec?ref=production" |
+    awk '$1=="Version:" {print $2; exit}' | newest
+}
+
 src_windows() {
   # official Windows builds (also what winget/choco/scoop download)
   fetch "https://windows.php.net/downloads/releases/releases.json" | jq -r --arg b "$1" '.[$b].version // empty'
@@ -213,6 +220,7 @@ rows=("php.net|source|src_phpnet" "php-src git tag|source|src_github" "endoflife
 for s in $ubuntu_series; do rows+=("apt ondrej $s|${release[$s]:-Ubuntu}|src_ondrej|$s"); done
 for s in $debian_series; do rows+=("apt sury $s|${release[$s]:-Debian}|src_sury|$s"); done
 for s in $plesk_series; do rows+=("plesk $s|${release[$s]:-Linux}|src_plesk|$s"); done
+rows+=("cPanel ea-php (git)|cPanel|src_cpanel")
 for s in $rhel_series; do rows+=("dnf remi el$s|RHEL/Alma/Rocky $s|src_remi|$s"); done
 for s in $alpine_series; do rows+=("apk alpine $s|Alpine ${s#v}|src_alpine|$s"); done
 rows+=("pacman extra|Arch / Omarchy|src_arch" "AUR phpXY|Arch / Omarchy|src_aur")

@@ -9,7 +9,7 @@
 | Docker php image | Docker | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | windows.php.net | Windows | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | winget | Windows | 🟠 8.2.33 | 🟠 8.3.35 | 🟠 8.4.25 | 🟠 8.5.11 |
-| Chocolatey | Windows | 🟠 8.2.34 | ⚠️ | 🟠 8.4.26 | ⚠️ |
+| Chocolatey | Windows | 🟠 8.2.34 | 🟠 8.3.35 | 🟠 8.4.26 | 🟠 8.5.11 |
 | Scoop versions | Windows | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | plesk windows | Windows | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | apt ondrej noble | Ubuntu 24.04 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
@@ -17,12 +17,13 @@
 | apt sury trixie | Debian 13 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | apt sury bookworm | Debian 12 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | plesk noble | Ubuntu 24.04 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
+| cPanel ea-php (git) | cPanel | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | dnf remi el10 | RHEL/Alma/Rocky 10 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
-| dnf remi el9 | RHEL/Alma/Rocky 9 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | ⚠️ |
-| dnf remi el8 | RHEL/Alma/Rocky 8 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
+| dnf remi el9 | RHEL/Alma/Rocky 9 | 🟢 8.2.35 | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
+| dnf remi el8 | RHEL/Alma/Rocky 8 | ⚠️ | 🟢 8.3.36 | 🟢 8.4.27 | 🟢 8.5.12 |
 | apk alpine v3.24 | Alpine 3.24 | 🔴 | 🟠 8.3.35 | 🟠 8.4.26 | 🟠 8.5.11 |
 | apk alpine edge | Alpine edge | 🔴 | 🟠 8.3.35 | 🟠 8.4.26 | 🟠 8.5.11 |
 | pacman extra | Arch / Omarchy | 🔴 | 🟢 8.3.36 | 🔴 | 🟢 8.5.12 |
 | AUR phpXY | Arch / Omarchy | 🟠 8.2.33 | 🟠 8.3.33 | 🟠 8.4.24 | 🟠 8.5.9 |
 
-_🟢 = has the expected version, 🟠 = not yet, 🔴 = not available, ⚠️ = lookup failed. Checked 2026-10-21 18:55 UTC._
+_🟢 = has the expected version, 🟠 = not yet, 🔴 = not available, ⚠️ = lookup failed. Checked 2026-10-21 19:00 UTC._
