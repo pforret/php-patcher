@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 ### check-latest.sh: show the latest PHP release per branch, as published by php.net and the package sources
-### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, winget/choco/scoop (Windows), apt (Ubuntu/Debian), pacman/AUR (Arch, Omarchy)
-### Usage: ./check-latest.sh [--md] [-F "8.5.12 8.4.27 8.3.36 8.2.35"] [-u "noble jammy"] [-d "trixie bookworm"] [8.2 8.3 8.4 8.5]
+### Sources: php.net, git tags, endoflife.date, Homebrew (macOS), Docker, winget/choco/scoop (Windows), apt (Ubuntu/Debian), dnf/Remi (RHEL/Alma/Rocky), apk (Alpine), pacman/AUR (Arch, Omarchy)
+### Usage: ./check-latest.sh [--md] [-F "8.5.12 8.4.27 8.3.36 8.2.35"] [-u "noble jammy"] [-d "trixie bookworm"] [-r "10 9 8"] [-a "v3.24 edge"] [8.2 8.3 8.4 8.5]
 ### Needs curl and jq. A version behind the expected (-F/--fixed) one is marked with '<' (--md: 🟢 ok / 🟠 not yet / 🔴 not available / ⚠️ lookup failed = '?').
 set -uo pipefail
 
 branches=(8.2 8.3 8.4 8.5)
 ubuntu_series="noble jammy" # focal (20.04): the PPA has no PHP packages for it
 debian_series="trixie bookworm"
+rhel_series="10 9 8"
+alpine_series="v3.24 edge"
 fixed="8.5.12 8.4.27 8.3.36 8.2.35" # same default as php-patcher --fixed
 md=0
+max_jobs=16
 
 args=()
 for arg in "$@"; do
@@ -21,12 +24,14 @@ for arg in "$@"; do
 done
 set -- "${args[@]+"${args[@]}"}"
 
-while getopts "u:d:F:mh" opt; do
+while getopts "u:d:r:a:F:mh" opt; do
   case $opt in
   F) fixed="$OPTARG" ;;
   m) md=1 ;;
   u) ubuntu_series="$OPTARG" ;;
   d) debian_series="$OPTARG" ;;
+  r) rhel_series="$OPTARG" ;;
+  a) alpine_series="$OPTARG" ;;
   *) sed -n '2,5s/^### //p' "$0" && exit 0 ;;
   esac
 done
@@ -133,6 +138,20 @@ src_aur() {
   fetch "https://aur.archlinux.org/rpc/v5/info?arg[]=php${1//./}" | jq -r '.results[].Version' | sed -E 's/-.*//' | newest
 }
 
+src_remi() {
+  # Remi repo (RHEL/AlmaLinux/Rocky): one folder per branch and EL release ($2)
+  fetch "https://rpms.remirepo.net/enterprise/$2/php${1//./}/x86_64/" |
+    grep -oE "php-cli-$1\.[0-9]+-" | sed -E 's/^php-cli-//; s/-$//' | newest
+}
+
+src_alpine() {
+  # Alpine community repo (also the base of the -alpine Docker images): one APKINDEX per release ($2)
+  local index="$tmp_dir/alpine.$2"
+  [[ -f "$index" ]] || cell_id="cache.alpine.$2" fetch "https://dl-cdn.alpinelinux.org/alpine/$2/community/x86_64/APKINDEX.tar.gz" | tar -xzO APKINDEX >"$index" 2>/dev/null
+  [[ -e "$tmp_dir/fail.cache.alpine.$2" ]] && failed
+  awk -v pkg="P:php${1//./}" '$0==pkg {p=1; next} /^P:/ {p=0} p && /^V:/ {print substr($0, 3)}' "$index" | sed -E 's/-r[0-9]+$//' | newest
+}
+
 src_windows() {
   # official Windows builds (also what winget/choco/scoop download)
   fetch "https://windows.php.net/downloads/releases/releases.json" | jq -r --arg b "$1" '.[$b].version // empty'
@@ -169,6 +188,8 @@ rows=("php.net|source|src_phpnet" "php-src git tag|source|src_github" "endoflife
   "windows.php.net|Windows|src_windows" "winget|Windows|src_winget" "Chocolatey|Windows|src_choco" "Scoop versions|Windows|src_scoop")
 for s in $ubuntu_series; do rows+=("apt ondrej $s|${release[$s]:-Ubuntu}|src_ondrej|$s"); done
 for s in $debian_series; do rows+=("apt sury $s|${release[$s]:-Debian}|src_sury|$s"); done
+for s in $rhel_series; do rows+=("dnf remi el$s|RHEL/Alma/Rocky $s|src_remi|$s"); done
+for s in $alpine_series; do rows+=("apk alpine $s|Alpine ${s#v}|src_alpine|$s"); done
 rows+=("pacman extra|Arch / Omarchy|src_arch" "AUR phpXY|Arch / Omarchy|src_aur")
 command -v apt-cache >/dev/null && rows+=("apt (this machine)|${local_os:-Linux}|src_apt_local")
 
@@ -176,10 +197,12 @@ command -v apt-cache >/dev/null && rows+=("apt (this machine)|${local_os:-Linux}
 src_eol 0 >/dev/null
 src_arch 0 >/dev/null
 for s in $debian_series; do src_sury 0 "$s" >/dev/null & done
+for s in $alpine_series; do src_alpine 0 "$s" >/dev/null & done
 wait
 for i in "${!rows[@]}"; do
   IFS='|' read -r label os func arg <<<"${rows[$i]}"
   for b in "${branches[@]}"; do
+    while (($(jobs -rp | wc -l) >= max_jobs)); do wait -n; done # too many at once and requests start failing
     cell_id="$i.$b" $func "$b" ${arg:+"$arg"} >"$tmp_dir/cell.$i.$b" 2>/dev/null &
   done
 done
@@ -199,7 +222,7 @@ print_row() {
     printf "| %s | %s |" "$label" "$os"
     printf " %s |" "$@"
   else
-    printf "%-24s%-16s" "$label" "$os"
+    printf "%-24s%-20s" "$label" "$os"
     printf "%-11s" "$@"
   fi
   echo
