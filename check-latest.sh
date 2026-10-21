@@ -45,7 +45,7 @@ failed() { touch "$tmp_dir/fail.${cell_id:-x}"; }
 fetch() {
   local body code
   body=$(mktemp "$tmp_dir/body.XXXXXX")
-  code=$(curl -sL --max-time 20 -o "$body" -w '%{http_code}' "$@" 2>/dev/null)
+  code=$(curl -sL --max-time 20 --retry 2 --retry-delay 3 -o "$body" -w '%{http_code}' "$@" 2>/dev/null)
   case $code in
   2*) cat "$body" ;;
   404) ;;
