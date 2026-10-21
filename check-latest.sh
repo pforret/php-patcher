@@ -139,6 +139,9 @@ declare -A release=([focal]="Ubuntu 20.04" [jammy]="Ubuntu 22.04" [noble]="Ubunt
   [bullseye]="Debian 11" [bookworm]="Debian 12" [trixie]="Debian 13" [forky]="Debian 14")
 local_os=$(. /etc/os-release 2>/dev/null && echo "${NAME:-} ${VERSION_ID:-}")
 
+# links for the source column in --md mode
+declare -A link=([endoflife.date]="https://endoflife.date/php")
+
 # label|OS|function|argument
 rows=("php.net|source|src_phpnet" "php-src git tag|source|src_github" "endoflife.date|-|src_eol"
   "Homebrew core|macOS|src_brew" "brew shivammathur/php|macOS|src_shivammathur" "Docker php image|Docker|src_docker")
@@ -187,7 +190,11 @@ if ((md)); then
   echo "|$(printf '%s|' "${cells[@]}")"
 fi
 cells=()
-for b in "${branches[@]}"; do cells+=("${expected[$b]:--}"); done
+for b in "${branches[@]}"; do
+  v="${expected[$b]:-}"
+  ((md)) && [[ -n "$v" ]] && v="**$v**"
+  cells+=("${v:--}")
+done
 print_row "expected (--fixed)" "-" "${cells[@]}"
 for i in "${!rows[@]}"; do
   IFS='|' read -r label os func arg <<<"${rows[$i]}"
@@ -204,6 +211,7 @@ for i in "${!rows[@]}"; do
       ((md)) && cells+=("🟢 $v") || cells+=("$v")
     fi
   done
+  ((md)) && [[ -n "${link[$label]:-}" ]] && label="[$label](${link[$label]})"
   print_row "$label" "$os" "${cells[@]}"
 done
 if ((md)); then
