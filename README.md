@@ -15,9 +15,9 @@ For each server it prints the OS and every PHP binary with a status:
 
 ```text
 % php-patcher --pick --patch auto
-Patch PHP on 1 host(s): ocean11 ? [y/N] y 
-sudo password for forge@ocean11 (empty = skip):                                                                                                                                                        
-ocean11  Ubuntu 24.04.4 LTS                                                                                                                                                                            
+Patch PHP on 1 host(s): web1 ? [y/N] y 
+sudo password for forge@web1 (empty = skip):                                                                                                                                                        
+web1  Ubuntu 24.04.4 LTS                                                                                                                                                                            
   php (cli)      8.4.26   PATCH (fixed in 8.4.27)  released 2026-09-24, 27 days ago
   php-fpm8.3     8.3.35   PATCH (fixed in 8.3.36)  released 2026-09-24, 27 days ago
   php-fpm8.4     8.4.26   PATCH (fixed in 8.4.27)  released 2026-09-24, 27 days ago

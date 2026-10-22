@@ -116,7 +116,7 @@ E: Unmet dependencies. Try 'apt --fix-broken install' with no packages (or speci
 An earlier apt run (often unattended-upgrades) stopped halfway. `dpkg -l | grep -v '^ii'` shows
 the half-done packages (`iU` = unpacked but not configured). apt refuses to install anything else
 until they are repaired. That also means the server has silently stopped getting security
-updates: on forge3, 214 packages were waiting.
+updates: on one server, 214 packages were waiting.
 
 ```bash
 sudo apt-get -s -f install       # dry run: shows what the repair would do, needs no root
