@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# fake macOS «security» for tests/upgrade-ubuntu.bats: generic passwords in files under $HOME/keychain
+verb="$1"
+shift
+service="" account="" secret="" print=0
+while (($#)); do
+  case "$1" in
+  -s) service="$2"; shift 2 ;;
+  -a) account="$2"; shift 2 ;;
+  -w)
+    if [[ $verb == add-generic-password ]]; then secret="$2"; shift 2; else print=1; shift; fi
+    ;;
+  *) shift ;;
+  esac
+done
+file="$HOME/keychain/$service.$account"
+case "$verb" in
+add-generic-password)
+  mkdir -p "$HOME/keychain"
+  printf '%s' "$secret" >"$file"
+  ;;
+find-generic-password)
+  [[ -f $file ]] || {
+    echo "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain." >&2
+    exit 44
+  }
+  ((print)) && cat "$file" && echo
+  ;;
+*) exit 1 ;;
+esac

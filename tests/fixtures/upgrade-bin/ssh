@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# fake ssh for tests/upgrade-ubuntu.bats: "ssh -G" goes to the real ssh (it does not connect).
+# Every call is logged to $HOME/ssh.calls (ARGS: and STDIN: lines), so tests can check where the password went.
+# Hosts: bad* = connection refused; the sudo password is «secret»; the server state comes from the host prefix:
+#   focal* = focal, nginx running · masked* = focal, nginx masked · prepared* = prepared for focal → jammy
+#   jammyup* = on jammy after the upgrade, PHP missing · noble* = finished on noble
+real_ssh="${REAL_SSH:-/usr/bin/ssh}"
+for arg in "$@"; do
+  [[ $arg == "-G" ]] && exec "$real_ssh" "$@"
+done
+host=""
+while (($#)); do
+  case "$1" in
+  -o | -F) shift 2 ;;
+  -*) shift ;;
+  *)
+    host="$1"
+    shift
+    break
+    ;;
+  esac
+done
+command="$*"
+stdin=""
+[[ -t 0 ]] || stdin=$(cat)
+{
+  echo "ARGS: $host $command"
+  echo "STDIN: $stdin"
+} >>"$HOME/ssh.calls"
+echo "** WARNING: connection is not using a post-quantum key exchange algorithm." >&2
+if [[ $host == bad* ]]; then
+  echo "ssh: connect to host $host port 22: Connection refused" >&2
+  exit 255
+fi
+if [[ $command == *"sudo -k -S"* ]]; then
+  if [[ $(head -1 <<<"$stdin") != secret ]]; then
+    echo "Sorry, try again." >&2
+    echo "sudo: 1 incorrect password attempt" >&2
+    exit 1
+  fi
+  [[ $command == *"systemctl stop nginx"* ]] && echo "nginx: masked / inactive"
+  echo "(ran as root on $host)"
+  exit 0
+fi
+if [[ $command == *"upgrader_running"* ]]; then
+  case "$host" in
+  focal*) printf '%s\n' codename=focal "desc=Ubuntu 20.04.6 LTS" nginx_enabled=enabled nginx_active=active hops= reboot_required=0 upgrader_running=0 php_total=0 php_missing=0 cruft=0 ;;
+  masked*) printf '%s\n' codename=focal "desc=Ubuntu 20.04.6 LTS" nginx_enabled=masked nginx_active=inactive hops= reboot_required=0 upgrader_running=0 php_total=0 php_missing=0 cruft=0 ;;
+  prepared*) printf '%s\n' codename=focal "desc=Ubuntu 20.04.6 LTS" nginx_enabled=masked nginx_active=inactive hops=focal-to-jammy reboot_required=0 upgrader_running=0 php_total=0 php_missing=0 cruft=0 ;;
+  jammyup*) printf '%s\n' codename=jammy "desc=Ubuntu 22.04.5 LTS" nginx_enabled=masked nginx_active=inactive hops=focal-to-jammy reboot_required=0 upgrader_running=0 php_total=68 php_missing=60 cruft=5 ;;
+  noble*) printf '%s\n' codename=noble "desc=Ubuntu 24.04.4 LTS" nginx_enabled=enabled nginx_active=active hops= reboot_required=0 upgrader_running=0 php_total=0 php_missing=0 cruft=0 ;;
+  *) printf '%s\n' codename=unknown ;;
+  esac
+  exit 0
+fi
+if [[ $command == *"upgrade preflight"* ]]; then
+  echo "## $host: upgrade preflight (fake)"
+  [[ $host == masked* ]] && exit 0
+  echo "- ❌ nginx is enabled/active: take the sites offline first with nginx-down"
+  exit 1
+fi
+exit 0
