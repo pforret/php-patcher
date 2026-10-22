@@ -38,6 +38,63 @@ Cons: more manual work per site, the server gets a new IP address (firewalls, al
 `do-release-upgrade` only goes from one LTS to the next, so this is **two upgrades** with a reboot
 in between. Each takes 15–45 minutes, the sites are down or degraded during it.
 
+### Scripted: upgrade-ubuntu.sh
+
+[`upgrade-ubuntu.sh`](../../upgrade-ubuntu.sh) runs the steps of this section over SSH, one verb
+per stage. It never reboots and never runs `do-release-upgrade` by itself: those stay with you, in
+your own terminal. Every verb ends with `STATUS: <OK|READY|DONE|BLOCKED|FAILED|NEEDS-ADMIN> ...`
+and `NEXT: <command>` (exit code 0, 1 or 3), and saves its output in
+`~/log/upgrade-ubuntu/<host>/<timestamp>.<verb>.log`.
+
+```bash
+./upgrade-ubuntu.sh password myhost      # once, in your terminal (see below)
+./upgrade-ubuntu.sh status myhost        # read-only: which stage, what is next (run it any time)
+./upgrade-ubuntu.sh nginx-down myhost    # stop + mask nginx: the sites stay offline across both hops
+./upgrade-ubuntu.sh preflight myhost     # read-only: READY or BLOCKED, with the reason
+#   take a provider snapshot now (DigitalOcean: Droplet → Snapshots)
+./upgrade-ubuntu.sh prepare myhost       # backups, DB dump (also copied to your machine), mirror fix, full-upgrade
+ssh -t myhost sudo reboot
+./upgrade-ubuntu.sh upgrade myhost       # in your terminal: do-release-upgrade inside screen
+#   reconnect after a drop: ssh -t myhost sudo screen -x upgrade
+./upgrade-ubuntu.sh logs myhost          # the upgrader's logs, errors first
+./upgrade-ubuntu.sh postflight myhost    # after the reboot: ppa:ondrej/php, reinstall PHP, restart services
+#   on 22.04: preflight, prepare, reboot, upgrade, postflight once more for 24.04
+./php-patcher.sh host myhost             # every PHP line OK? else --patch
+./upgrade-ubuntu.sh nginx-up myhost
+./upgrade-ubuntu.sh verify myhost        # OS, kernel, PHP vs --fixed, services, every site over HTTPS
+./upgrade-ubuntu.sh cleanup myhost       # port 1022, *.distUpgrade/*.save, the stored password
+```
+
+Useful flags (before the verb): `--target jammy` to stop after one hop, `--no_dump` when there is no
+MySQL (or you dump yourself), `--drop_php 7.4` to not reinstall an old PHP branch, `--disable
+site1,site2` to switch off sites (nginx, crontab, supervisor) during postflight, `-f` to skip the
+y/N question.
+
+**The sudo password**: `password` asks for it once, checks it with `sudo -k -S true` on the server
+and stores it AES-256 encrypted in `~/.config/upgrade-ubuntu/<host>.pw.enc`. The key is in the
+macOS Keychain (on Linux: `~/.config/upgrade-ubuntu/.key`, 0600). Every sudo verb gives it to sudo
+on stdin, so it never shows up in a command line or a log. `forget` deletes it, and the last
+`cleanup` does too.
+
+**Oracle MySQL**: postflight stops with `NEEDS-ADMIN` until `mysql.list` points to the new
+release; run `ssh -t <host> sudo dpkg-reconfigure mysql-apt-config` and pick the new release and the
+same MySQL series.
+
+**If `prepare` cannot dump the databases** (`Access denied` for root): create `/root/.my.cnf` with
+`[client]`, `user=root` and the password from the Forge provisioning e-mail, `chmod 600` it, or re-run with `--no_dump`.
+
+### With Claude Code
+
+The script is made to be run by an admin with Claude Code alongside:
+
+- **You** run the steps that need a terminal: `password`, `upgrade` (the `do-release-upgrade`
+  prompts), the reboots, and `dpkg-reconfigure mysql-apt-config`. Paste anything unexpected into
+  the chat, especially the remove list you get with `d` before the upgrade starts.
+- **Claude** can run the other verbs through its Bash tool once the password is stored (with `-f`;
+  your permission prompt is the confirmation), reads the logs in `~/log/upgrade-ubuntu/<host>/`,
+  and follows the `STATUS:`/`NEXT:` lines. `status` tells it where things stand after a break.
+- A `NEEDS-ADMIN` status means the next step is yours; `BLOCKED` means fix the reason first.
+
 ### Before you start
 
 ```bash

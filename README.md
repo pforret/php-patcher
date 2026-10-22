@@ -88,6 +88,25 @@ include="forge"
   without a terminal it prints the `ssh -t` command to run yourself), and apt (Debian/Ubuntu, incl. the Ondřej Surý
   packages used by Forge) or dnf/yum (RHEL/Alma/Rocky, Remi)
 
+## Ubuntu 20.04: upgrade-ubuntu.sh
+
+No PHP repository builds PHP 8.x for Ubuntu 20.04 anymore, so on such a server `--patch` can't help.
+`upgrade-ubuntu.sh` scripts the in-place upgrade 20.04 → 22.04 → 24.04 over SSH, one verb per stage:
+
+```bash
+./upgrade-ubuntu.sh password myhost     # once, in your terminal: sudo password, stored encrypted
+./upgrade-ubuntu.sh status myhost       # where does the upgrade stand, what is next (read-only)
+./upgrade-ubuntu.sh nginx-down myhost   # sites offline until nginx-up
+./upgrade-ubuntu.sh preflight myhost    # read-only READY / BLOCKED report
+./upgrade-ubuntu.sh prepare myhost      # backups, DB dump, mirror fix, apt full-upgrade
+./upgrade-ubuntu.sh upgrade myhost      # in your terminal: do-release-upgrade inside screen
+./upgrade-ubuntu.sh postflight myhost   # after the reboot: PHP back from ppa:ondrej/php
+./upgrade-ubuntu.sh nginx-up myhost     # then verify and cleanup
+```
+
+Every verb ends with `STATUS:` and `NEXT:` lines and keeps a log in `~/log/upgrade-ubuntu/<host>/`,
+so it can also be driven with Claude Code. See [docs/faq/ubuntu20.md](docs/faq/ubuntu20.md#scripted-upgrade-ubuntush).
+
 ## Troubleshooting
 
 - [docs/DIY.md](docs/DIY.md): the same checks and patches by hand, without this script (Linux, macOS, Windows)
@@ -98,7 +117,7 @@ include="forge"
 ## Tests
 
 ```bash
-bats tests/    # offline: fake ssh/fzf and a temporary HOME, no server is contacted
+bats tests/    # both scripts, offline: fake ssh/fzf/security and a temporary HOME, no server is contacted
 ```
 
 Built with [bashew](https://github.com/pforret/bashew).

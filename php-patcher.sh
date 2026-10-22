@@ -636,6 +636,7 @@ if [[ $os_id == ubuntu && ${os_version%%.*} =~ ^[0-9]+$ ]] && ((${os_version%%.*
   no_php_repo=1
   echo "  WARNING: Ubuntu $os_version gets no newer PHP 8.x packages (no PPA anymore): move to Ubuntu 24.04"
   echo "           (packages.sury.org/php has no Ubuntu $os_version either: only supported releases get backports)"
+  echo "           (upgrade-ubuntu.sh preflight <host> scripts the in-place upgrade, see docs/faq/ubuntu20.md)"
 fi
 show
 if ((upgrade)); then

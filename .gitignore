@@ -1,0 +1,5 @@
+.env
+/.idea/
+/temp/
+/tmp/
+forge-servers.txt
