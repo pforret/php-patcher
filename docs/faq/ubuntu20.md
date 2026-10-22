@@ -200,6 +200,10 @@ firewall rule (`sudo ufw delete allow 1022/tcp`).
   to the upgrader (DigitalOcean's, or another provider's) and was disabled. See
   [DigitalOcean: replace the mirror first](#digitalocean-replace-the-mirror-first). Details are in
   `/var/log/dist-upgrade/main.log`.
+- **`Failure restarting some services for GNU libc upgrade: mysql`** during the upgrade: click OK
+  and let it finish. The journal shows `status=217/USER` / `Failed to determine user credentials`:
+  halfway through the libc upgrade, systemd cannot look up the `mysql` user. It is temporary,
+  `sudo systemctl start mysql` (or the reboot) brings it back.
 - **Upgrade interrupted**: log in again (port 22 or 1022, or the provider console), then
   `sudo screen -x` to reattach, or finish with `sudo dpkg --configure -a && sudo apt-get -f install`.
 - **PHP gone after the upgrade**: you answered yes to removing obsolete packages. Re-add the PHP
