@@ -713,7 +713,7 @@ mysql_pkg=$(dpkg -l 2>/dev/null | awk '/^ii +mysql-(community-)?server[ -]/ {pri
 case "$mysql_pkg" in
   mysql-community-server*)
     series=$(awk '{print $2}' <<<"$mysql_pkg" | cut -d. -f1,2)
-    warnings+=("MySQL is Oracle's mysql-community-server $series (repo.mysql.com): after the upgrade, run dpkg-reconfigure mysql-apt-config in a terminal and pick the new release")
+    warnings+=("MySQL is Oracle's mysql-community-server $series (repo.mysql.com): after the upgrade, postflight prints how to point mysql-apt-config at the new release")
     [[ $series != 8.0 ]] && warnings+=("Oracle MySQL $series has no Ubuntu equivalent: keep it on repo.mysql.com, never swap it to Ubuntu's mysql-server-8.0 (that is a downgrade the data directory cannot start on)")
     ;;
 esac
@@ -912,7 +912,7 @@ apt-get -y autoremove --purge
 apt-get clean
 journalctl --vacuum-size=200M >/dev/null 2>&1 || true
 echo "→ disk after cleanup:"
-df -h / /boot 2>/dev/null
+df -h / /boot 2>/dev/null | awk '!seen[$1]++'
 [ -f /var/run/reboot-required ] && echo "→ a reboot is pending" || true
 REMOTE
   )
@@ -928,7 +928,7 @@ REMOTE
     echo "→ no MySQL dump (--no_dump): the provider snapshot is the only database backup"
   else
     local_dump="$LOG_DIR/${host//\//_}/all-databases.$(date '+%Y%m%d-%H%M%S').sql.gz"
-    echo "→ MySQL dump: $backup_root/$hop/all-databases.sql.gz on the server + $local_dump here"
+    echo "→ MySQL dump to $backup_root/$hop/all-databases.sql.gz on the server + $local_dump here:"
     dump="$(vars_script B="$backup_root/$hop")"$'\n'
     dump+=$(
       cat <<'REMOTE'
@@ -1021,6 +1021,11 @@ function do_upgrade() {
       return
     }
     ssh -t "$host" "$cmd"
+    # 255: the server closed the connection, i.e. the upgrade rebooted it
+    if (($? == 255)); then
+      finish NEEDS-ADMIN "do-release-upgrade ended on $host and it is rebooting" "wait a few minutes, then $self status $host"
+      return
+    fi
     finish NEEDS-ADMIN "do-release-upgrade ended on $host (or was detached)" "if it did not reboot: ssh -t $host sudo reboot; then $self status $host"
     return
   fi
@@ -1144,7 +1149,8 @@ REMOTE
   case "$rc" in
   0) ;;
   10)
-    finish NEEDS-ADMIN "PHP is back; Oracle MySQL's apt source still needs $code" "ssh -t $host sudo dpkg-reconfigure mysql-apt-config   (in your own terminal: pick $code and the same MySQL series), then: ssh -t $host 'sudo apt-get update && sudo apt-get install --only-upgrade \"mysql-community-*\"', then $self status $host"
+    # dpkg-reconfigure alone keeps the stored codename (no dialog) and rewrites mysql.list with the old release
+    finish NEEDS-ADMIN "PHP is back; Oracle MySQL's apt source still needs $code" "ssh -t $host 'echo \"mysql-apt-config mysql-apt-config/repo-codename select $code\" | sudo debconf-set-selections && sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure mysql-apt-config && sudo apt-get update && sudo apt-get install --only-upgrade \"mysql-community-*\"'   (EXPKEYSIG B7B3B788A8D3785C: see docs/faq/ubuntu20.md), then $self status $host"
     return
     ;;
   *)

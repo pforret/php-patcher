@@ -77,8 +77,7 @@ on stdin, so it never shows up in a command line or a log. `forget` deletes it, 
 `cleanup` does too.
 
 **Oracle MySQL**: postflight stops with `NEEDS-ADMIN` until `mysql.list` points to the new
-release; run `ssh -t <host> sudo dpkg-reconfigure mysql-apt-config` and pick the new release and the
-same MySQL series.
+release, and prints the command to fix it (see [Oracle MySQL apt source](#oracle-mysql-apt-source)).
 
 **If `prepare` cannot dump the databases** (`Access denied` for root): create `/root/.my.cnf` with
 `[client]`, `user=root` and the password from the Forge provisioning e-mail, `chmod 600` it, or re-run with `--no_dump`.
@@ -88,7 +87,7 @@ same MySQL series.
 The script is made to be run by an admin with Claude Code alongside:
 
 - **You** run the steps that need a terminal: `password`, `upgrade` (the `do-release-upgrade`
-  prompts), the reboots, and `dpkg-reconfigure mysql-apt-config`. Paste anything unexpected into
+  prompts), the reboots, and the Oracle MySQL apt source. Paste anything unexpected into
   the chat, especially the remove list you get with `d` before the upgrade starts.
 - **Claude** can run the other verbs through its Bash tool once the password is stored (with `-f`;
   your permission prompt is the confirmation), reads the logs in `~/log/upgrade-ubuntu/<host>/`,
@@ -198,9 +197,30 @@ With Oracle's MySQL, check it runs, then point its source at the new release:
 ```bash
 systemctl status mysql
 mysql --version
-sudo dpkg-reconfigure mysql-apt-config        # pick jammy and the same MySQL series
+echo "mysql-apt-config mysql-apt-config/repo-codename select jammy" | sudo debconf-set-selections
+sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure mysql-apt-config
+grep ^deb /etc/apt/sources.list.d/mysql.list   # must say jammy
 sudo apt-get update
+sudo apt-get install --only-upgrade "mysql-community-*"
 ```
+
+#### Oracle MySQL apt source
+
+- **A plain `dpkg-reconfigure mysql-apt-config` is not enough**: it keeps the release stored in
+  debconf (`mysql-apt-config/repo-codename`), shows no dialog, and writes `mysql.list` with the old
+  release again. So does every upgrade of the `mysql-apt-config` package. Set the debconf value first,
+  as above. When it asks to overwrite `/usr/share/keyrings/mysql-apt-config.gpg`: `mysql-apt-config`
+  0.8.40 and later carry the extended key, so `y` is fine; older ones carry the expired key (see
+  below). `N` makes gpg ask for another filename, and it writes that file to `/`.
+- **`EXPKEYSIG B7B3B788A8D3785C`** on `apt-get update`: the MySQL signing key in the keyring expired
+  on 2025-10-22. Oracle extended the same key (to 2027-10-23), but older `mysql-apt-config` packages and
+  `repo.mysql.com/RPM-GPG-KEY-mysql-2023` still carry the old expiry. Fetch it from the keyserver:
+
+  ```bash
+  curl -fsS "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xB7B3B788A8D3785C" \
+    | gpg --dearmor | sudo tee /usr/share/keyrings/mysql-apt-config.gpg >/dev/null
+  gpg --show-keys /usr/share/keyrings/mysql-apt-config.gpg | grep ^pub   # expires: 2027-10-23
+  ```
 
 If MySQL does not start, do not delete `/var/lib/mysql` or force an upgrade: read
 `sudo journalctl -u mysql -n 50` first; the dump and the snapshot are the fallback.
@@ -220,7 +240,7 @@ Check that the sites work before going on.
 
 Same steps once more: `sudo apt-get update && sudo apt-get full-upgrade`, reboot,
 `sudo do-release-upgrade`, the same answers, reboot, re-add the PHP source for noble and
-reinstall `~/php-packages.txt`, then `sudo dpkg-reconfigure mysql-apt-config` for noble.
+reinstall `~/php-packages.txt`, then point `mysql-apt-config` at noble (same commands as above, with `noble`).
 On DigitalOcean, first check that `mirrors.digitalocean.com` has not come back in the sources.
 
 24.04 uses the deb822 format for apt sources: the Ubuntu archive moves to
